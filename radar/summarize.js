@@ -30,19 +30,25 @@ function truncate(text, limit) {
 }
 
 function buildUserMessage(item, topic) {
+  const interests = []
+  if (Array.isArray(topic.keywords) && topic.keywords.length > 0) interests.push(`关键词：${topic.keywords.join('、')}`)
+  if (Array.isArray(topic.authors) && topic.authors.length > 0) interests.push(`关注作者：${topic.authors.join('、')}`)
+  if (Array.isArray(topic.venues) && topic.venues.length > 0) interests.push(`关注期刊：${topic.venues.join('、')}`)
+  if (Array.isArray(topic.institutions) && topic.institutions.length > 0)
+    interests.push(`关注单位：${topic.institutions.join('、')}`)
+
   const lines = [
     `用户研究方向：${topic.name}`,
-    `关注关键词：${topic.keywords.join('、') || '（未指定）'}`,
+    ...interests,
     '',
     `论文标题：${item.title}`,
-    `来源：${item.source}`,
+    `期刊/来源：${item.venue || item.source || '未知'}`,
     `发布/提交时间：${item.publishedAt || '未知'}`,
-    `作者：${item.authors.length > 0 ? item.authors.join(', ') : '未知'}`,
+    `作者：${item.authors.length > 0 ? item.authors.slice(0, 10).join(', ') : '未知'}`,
     `链接：${item.url}`,
-    '',
-    '摘要：',
-    truncate(item.abstract || '（该源未提供摘要）', MAX_ABSTRACT_CHARS),
   ]
+  if (item.matchedIn) lines.push(`检索命中：${item.matchedIn}`)
+  lines.push('', '摘要：', truncate(item.abstract || '（该源未提供摘要）', MAX_ABSTRACT_CHARS))
   return lines.join('\n')
 }
 

@@ -8,10 +8,15 @@ export function defaultSettings() {
     scan: {
       enabled: true,
       intervalHours: 12,
-      maxPerTopic: 6,
+      maxPerTopic: 8,
       summarize: true,
+      lookbackDays: 30,
       lastScanAt: null,
       lastScanNew: 0,
+    },
+    api: {
+      mailto: '',
+      openalexKey: '',
     },
     mail: {
       enabled: false,
@@ -41,25 +46,47 @@ function asBool(value, fallback) {
   return typeof value === 'boolean' ? value : fallback
 }
 
+/** 把字符串（逗号/分号/换行分隔）或数组统一成去空字符串数组。 */
+function asStringList(value, max = 30) {
+  const list = Array.isArray(value)
+    ? value.map((v) => asString(v).trim())
+    : asString(value)
+        .split(/[,，;；\n]/)
+        .map((v) => v.trim())
+  const seen = new Set()
+  const out = []
+  for (const entry of list) {
+    if (entry === '') continue
+    const key = entry.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(entry)
+    if (out.length >= max) break
+  }
+  return out
+}
+
+const KNOWN_SOURCES = new Set(['openalex', 'crossref', 'pubmed', 'arxiv', 'biorxiv', 'rss'])
+
 function normalizeTopic(raw) {
   if (raw === null || typeof raw !== 'object') return null
   const id = asString(raw.id).trim()
   const name = asString(raw.name).trim()
   if (id === '' || name === '') return null
-  const keywords = Array.isArray(raw.keywords)
-    ? raw.keywords.map((k) => asString(k).trim()).filter((k) => k !== '')
-    : asString(raw.keywords)
-        .split(/[,，;；\n]/)
-        .map((k) => k.trim())
-        .filter((k) => k !== '')
   const sources = Array.isArray(raw.sources)
-    ? raw.sources.filter((s) => typeof s === 'string')
-    : ['arxiv']
+    ? raw.sources.filter((s) => typeof s === 'string' && KNOWN_SOURCES.has(s))
+    : ['openalex']
   return {
     id,
     name,
-    keywords,
-    sources: sources.length > 0 ? sources : ['arxiv'],
+    keywords: asStringList(raw.keywords, 20),
+    authors: asStringList(raw.authors, 20),
+    venues: asStringList(raw.venues, 10),
+    institutions: asStringList(raw.institutions, 10),
+    exclude: asStringList(raw.exclude, 20),
+    matchMode: raw.matchMode === 'all' ? 'all' : 'any',
+    strict: asBool(raw.strict, true),
+    sources: sources.length > 0 ? sources : ['openalex'],
     enabled: asBool(raw.enabled, true),
     createdAt: asString(raw.createdAt, new Date().toISOString()),
   }
@@ -79,6 +106,12 @@ function normalizeItem(raw) {
     publishedAt: asString(raw.publishedAt),
     url: asString(raw.url),
     abstract: asString(raw.abstract),
+    venue: asString(raw.venue),
+    doi: asString(raw.doi),
+    citations: asNumber(raw.citations, 0),
+    openAccess: asBool(raw.openAccess, false),
+    matchedIn: asString(raw.matchedIn),
+    score: asNumber(raw.score, 0),
     summary: raw.summary && typeof raw.summary === 'object' ? raw.summary : null,
     summaryError: asString(raw.summaryError),
     discoveredAt: asString(raw.discoveredAt, new Date().toISOString()),
@@ -108,16 +141,22 @@ function normalize(raw) {
   const s = raw.settings !== null && typeof raw.settings === 'object' ? raw.settings : {}
   const d = defaultSettings()
   const scan = s.scan !== null && typeof s.scan === 'object' ? s.scan : {}
+  const api = s.api !== null && typeof s.api === 'object' ? s.api : {}
   const mail = s.mail !== null && typeof s.mail === 'object' ? s.mail : {}
 
   base.settings = {
     scan: {
       enabled: asBool(scan.enabled, d.scan.enabled),
       intervalHours: Math.min(168, Math.max(1, asNumber(scan.intervalHours, d.scan.intervalHours))),
-      maxPerTopic: Math.min(20, Math.max(1, asNumber(scan.maxPerTopic, d.scan.maxPerTopic))),
+      maxPerTopic: Math.min(30, Math.max(1, asNumber(scan.maxPerTopic, d.scan.maxPerTopic))),
       summarize: asBool(scan.summarize, d.scan.summarize),
+      lookbackDays: Math.min(3650, Math.max(1, asNumber(scan.lookbackDays, d.scan.lookbackDays))),
       lastScanAt: typeof scan.lastScanAt === 'string' ? scan.lastScanAt : null,
       lastScanNew: asNumber(scan.lastScanNew, 0),
+    },
+    api: {
+      mailto: asString(api.mailto),
+      openalexKey: asString(api.openalexKey),
     },
     mail: {
       enabled: asBool(mail.enabled, d.mail.enabled),

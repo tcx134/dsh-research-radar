@@ -33,11 +33,12 @@ export function buildDigest(items, topics) {
     lines.push('')
     for (const item of group) {
       lines.push(`· ${item.title}`)
-      const meta = [item.source, item.publishedAt ? item.publishedAt.slice(0, 10) : '']
+      const meta = [item.venue, item.source, item.publishedAt ? item.publishedAt.slice(0, 10) : '']
         .filter(Boolean)
         .join(' · ')
       if (meta !== '') lines.push(`  ${meta}`)
       if (item.authors.length > 0) lines.push(`  作者：${item.authors.slice(0, 6).join(', ')}`)
+      if (item.matchedIn) lines.push(`  命中：${item.matchedIn}`)
       lines.push(`  链接：${item.url}`)
       const s = item.summary
       if (s !== null && typeof s === 'object') {
@@ -102,9 +103,11 @@ export async function runScan(ctx, config, store, options = {}) {
     for (const source of topic.sources) {
       const { items, errors } = await collectFromSource({
         source,
-        keywords: topic.keywords,
+        topic,
         max: settings.scan.maxPerTopic,
         rss: settings.rss,
+        api: settings.api,
+        lookbackDays: settings.scan.lookbackDays,
       })
       for (const error of errors) {
         result.errors.push({ topic: topicLabel(topic), ...error })
@@ -125,6 +128,12 @@ export async function runScan(ctx, config, store, options = {}) {
       }
     }
   }
+
+  // 跨方向去重后按相关度重排，保证最贴题的排在最前面
+  fresh.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return String(b.publishedAt ?? '').localeCompare(String(a.publishedAt ?? ''))
+  })
 
   // 逐篇生成结构化摘要（失败不阻断其它论文；单篇最多重试一次）
   if (settings.scan.summarize && fresh.length > 0) {

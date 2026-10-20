@@ -1,7 +1,7 @@
 import { createStore } from './radar/store.js'
 import { runScan, buildDigest } from './radar/scan.js'
 import { sendMail, textToHtml } from './radar/mail.js'
-import { SOURCE_LABELS } from './radar/sources.js'
+import { SOURCE_LABELS, collectFromSource } from './radar/sources.js'
 
 export const name = 'dsh-research-radar'
 
@@ -57,6 +57,28 @@ function readBody(req, limitBytes = 1024 * 512) {
 function maskMailSettings(mail) {
   return { ...mail, pass: mail.pass === '' ? '' : '********' }
 }
+
+/** 把前端传来的字符串（逗号/换行分隔）或数组统一成去空、去重的字符串数组。 */
+function toStringList(value, max = 30) {
+  const list = Array.isArray(value)
+    ? value.map((v) => String(v).trim())
+    : String(value ?? '')
+        .split(/[,，;；\n]/)
+        .map((v) => v.trim())
+  const seen = new Set()
+  const out = []
+  for (const entry of list) {
+    if (entry === '') continue
+    const key = entry.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(entry)
+    if (out.length >= max) break
+  }
+  return out
+}
+
+const KNOWN_SOURCES = new Set(Object.keys(SOURCE_LABELS))
 
 /* --------------------------------- 主逻辑 -------------------------------- */
 
@@ -174,30 +196,51 @@ export function apply(ctx, config) {
                 const id = String(payload.id ?? '').trim() || `t-${Date.now().toString(36)}`
                 const name = String(payload.name ?? '').trim()
                 if (name === '') throw new Error('研究方向名称不能为空')
-                const keywords = Array.isArray(payload.keywords)
-                  ? payload.keywords.map((k) => String(k).trim()).filter(Boolean)
-                  : String(payload.keywords ?? '')
-                      .split(/[,，;；\n]/)
-                      .map((k) => k.trim())
-                      .filter(Boolean)
-                if (keywords.length === 0) throw new Error('至少需要一个关键词')
+                const keywords = toStringList(payload.keywords, 20)
+                const authors = toStringList(payload.authors, 20)
+                const venues = toStringList(payload.venues, 10)
+                const institutions = toStringList(payload.institutions, 10)
+                const exclude = toStringList(payload.exclude, 20)
+                if (
+                  keywords.length === 0 &&
+                  authors.length === 0 &&
+                  venues.length === 0 &&
+                  institutions.length === 0
+                ) {
+                  throw new Error('至少填写关键词 / 作者 / 期刊 / 单位中的一项')
+                }
                 const sources = Array.isArray(payload.sources)
-                  ? payload.sources.filter((s) => typeof s === 'string' && s in SOURCE_LABELS)
-                  : ['arxiv']
+                  ? payload.sources.filter((s) => typeof s === 'string' && KNOWN_SOURCES.has(s))
+                  : ['openalex']
+                const finalSources = sources.length > 0 ? sources : ['openalex']
+                const matchMode = payload.matchMode === 'all' ? 'all' : 'any'
+                const strict = payload.strict !== false
                 const existing = state.topics.find((t) => t.id === id)
                 if (existing === undefined) {
                   state.topics.push({
                     id,
                     name,
                     keywords,
-                    sources: sources.length > 0 ? sources : ['arxiv'],
+                    authors,
+                    venues,
+                    institutions,
+                    exclude,
+                    matchMode,
+                    strict,
+                    sources: finalSources,
                     enabled: payload.enabled !== false,
                     createdAt: new Date().toISOString(),
                   })
                 } else {
                   existing.name = name
                   existing.keywords = keywords
-                  existing.sources = sources.length > 0 ? sources : ['arxiv']
+                  existing.authors = authors
+                  existing.venues = venues
+                  existing.institutions = institutions
+                  existing.exclude = exclude
+                  existing.matchMode = matchMode
+                  existing.strict = strict
+                  existing.sources = finalSources
                   existing.enabled = payload.enabled !== false
                 }
                 return state.topics
@@ -218,9 +261,17 @@ export function apply(ctx, config) {
                   state.settings.scan.intervalHours = Math.min(168, Math.max(1, Number(scan.intervalHours)))
                 }
                 if (Number.isFinite(Number(scan.maxPerTopic))) {
-                  state.settings.scan.maxPerTopic = Math.min(20, Math.max(1, Number(scan.maxPerTopic)))
+                  state.settings.scan.maxPerTopic = Math.min(30, Math.max(1, Number(scan.maxPerTopic)))
+                }
+                if (Number.isFinite(Number(scan.lookbackDays))) {
+                  state.settings.scan.lookbackDays = Math.min(3650, Math.max(1, Number(scan.lookbackDays)))
                 }
                 if (typeof scan.summarize === 'boolean') state.settings.scan.summarize = scan.summarize
+              }
+              if (patch.api !== null && typeof patch.api === 'object') {
+                const api = patch.api
+                if (typeof api.mailto === 'string') state.settings.api.mailto = api.mailto.trim()
+                if (typeof api.openalexKey === 'string') state.settings.api.openalexKey = api.openalexKey.trim()
               }
               if (patch.mail !== null && typeof patch.mail === 'object') {
                 const mail = patch.mail
@@ -245,6 +296,41 @@ export function apply(ctx, config) {
               }
             })
             sendJson(res, 200, { ok: true, state: await publicState() })
+            return
+          }
+
+          if (action === 'preview') {
+            // 试检索：不写库、不去重、不生成摘要，只验证「这个方向能不能搜到对的文章」。
+            const topic = body.topic ?? {}
+            const state = await store.load()
+            const max = Math.min(20, Math.max(1, Number(body.max ?? 5) || 5))
+            const sources =
+              Array.isArray(topic.sources) && topic.sources.length > 0
+                ? topic.sources.filter((s) => KNOWN_SOURCES.has(s))
+                : ['openalex']
+            const lookbackDays = Math.min(
+              3650,
+              Math.max(1, Number(body.lookbackDays ?? state.settings.scan.lookbackDays) || 30),
+            )
+            const found = []
+            const errors = []
+            for (const source of sources) {
+              const { items, errors: errs } = await collectFromSource({
+                source,
+                topic,
+                max,
+                rss: state.settings.rss,
+                api: state.settings.api,
+                lookbackDays,
+              })
+              found.push(...items)
+              errors.push(...errs)
+            }
+            found.sort((a, b) => {
+              if (b.score !== a.score) return b.score - a.score
+              return String(b.publishedAt ?? '').localeCompare(String(a.publishedAt ?? ''))
+            })
+            sendJson(res, 200, { ok: true, items: found.slice(0, max * sources.length), errors })
             return
           }
 
@@ -323,7 +409,7 @@ export function apply(ctx, config) {
     ctx.tools.register({
       name: 'research_radar',
       description:
-        '研究前沿雷达：管理用户关注的研究方向（关键词 + 订阅源），扫描并抓取最新论文，用 LLM 生成结构化摘要（方法/内容/创新点），可按需发送邮件摘要。action 取值：status（查看当前配置与最新论文）、add_topic（新增/更新方向）、list_topics、scan（立即扫描）、send_digest（把已抓取内容发邮件）。',
+        '研究前沿雷达：管理用户关注的研究方向，扫描并抓取最新论文，用 LLM 生成结构化摘要（方法/内容/创新点），可发送邮件摘要。研究方向支持多维度检索：keywords（标题/摘要关键词）、authors（作者）、venues（期刊）、institutions（单位）、exclude（排除词），不同维度之间是 AND。action 取值：status（查看配置与最新论文）、list_topics、add_topic（新增/更新方向）、remove_topic、scan（立即扫描）、send_digest（把已抓取内容发邮件）。',
       parameters: {
         type: 'object',
         properties: {
@@ -336,14 +422,18 @@ export function apply(ctx, config) {
           keywords: {
             type: 'array',
             items: { type: 'string' },
-            description: 'add_topic 时的检索关键词',
+            description: '标题/摘要关键词（短语用英文双引号在源站做精确匹配）',
           },
+          authors: { type: 'array', items: { type: 'string' }, description: '关注的作者名' },
+          venues: { type: 'array', items: { type: 'string' }, description: '关注的期刊/会议名' },
+          institutions: { type: 'array', items: { type: 'string' }, description: '关注的机构/单位' },
+          exclude: { type: 'array', items: { type: 'string' }, description: '排除词，命中即丢弃' },
           sources: {
             type: 'array',
-            items: { type: 'string', enum: ['arxiv', 'biorxiv', 'rss'] },
-            description: 'add_topic 时使用的订阅源',
+            items: { type: 'string', enum: ['openalex', 'crossref', 'pubmed', 'arxiv', 'biorxiv', 'rss'] },
+            description: 'add_topic 时使用的订阅源；材料/工程/物理等学科建议 openalex',
           },
-          topicId: { type: 'string', description: 'remove_topic 时的方向 id' },
+          topicId: { type: 'string', description: 'remove_topic 时的方向 id 或名称' },
         },
         required: ['action'],
         additionalProperties: false,
@@ -359,10 +449,20 @@ export function apply(ctx, config) {
         if (action === 'status') {
           const state = await publicState()
           return {
-            topics: state.topics.map((t) => ({ id: t.id, name: t.name, keywords: t.keywords, sources: t.sources })),
+            topics: state.topics.map((t) => ({
+              id: t.id,
+              name: t.name,
+              keywords: t.keywords,
+              authors: t.authors,
+              venues: t.venues,
+              institutions: t.institutions,
+              sources: t.sources,
+            })),
             latest: state.items.slice(0, 5).map((i) => ({
               title: i.title,
               url: i.url,
+              venue: i.venue,
+              matchedIn: i.matchedIn,
               tldr: i.summary?.tldr ?? null,
               discoveredAt: i.discoveredAt,
             })),
@@ -375,14 +475,31 @@ export function apply(ctx, config) {
         }
         if (action === 'add_topic') {
           const name = String(args?.name ?? '').trim()
-          const keywords = Array.isArray(args?.keywords) ? args.keywords.map(String) : []
-          if (name === '' || keywords.length === 0) throw new Error('需要 name 与 keywords')
-          const sources = Array.isArray(args?.sources) && args.sources.length > 0 ? args.sources.map(String) : ['arxiv']
+          const keywords = toStringList(args?.keywords, 20)
+          const authors = toStringList(args?.authors, 20)
+          const venues = toStringList(args?.venues, 10)
+          const institutions = toStringList(args?.institutions, 10)
+          const exclude = toStringList(args?.exclude, 20)
+          if (
+            name === '' ||
+            (keywords.length === 0 && authors.length === 0 && venues.length === 0 && institutions.length === 0)
+          ) {
+            throw new Error('需要 name，以及 keywords / authors / venues / institutions 中至少一项')
+          }
+          const sources =
+            Array.isArray(args?.sources) && args.sources.length > 0
+              ? args.sources.filter((s) => KNOWN_SOURCES.has(s))
+              : ['openalex']
+          const finalSources = sources.length > 0 ? sources : ['openalex']
           const topics = await store.mutate((state) => {
             const existing = state.topics.find((t) => t.name === name)
             if (existing !== undefined) {
               existing.keywords = keywords
-              existing.sources = sources
+              existing.authors = authors
+              existing.venues = venues
+              existing.institutions = institutions
+              existing.exclude = exclude
+              existing.sources = finalSources
               existing.enabled = true
               return state.topics
             }
@@ -390,7 +507,11 @@ export function apply(ctx, config) {
               id: `t-${Date.now().toString(36)}`,
               name,
               keywords,
-              sources,
+              authors,
+              venues,
+              institutions,
+              exclude,
+              sources: finalSources,
               enabled: true,
               createdAt: new Date().toISOString(),
             })
