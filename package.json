@@ -1,0 +1,34 @@
+{
+  "name": "@local/dsh-research-radar",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Research frontier radar: monitor new papers for your topics, summarize them with the LLM, and push a digest to the panel and by email.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "radar/store.js",
+    "radar/sources.js",
+    "radar/summarize.js",
+    "radar/mail.js",
+    "radar/scan.js",
+    "locale/en.json",
+    "locale/zh.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-locale"]
+    }
+  }
+}
