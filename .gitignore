@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+
+# 本地调试产物
+tmp-*/
+smoke-client.mjs
+.DS_Store
+Thumbs.db
