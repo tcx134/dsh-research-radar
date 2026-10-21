@@ -61,7 +61,7 @@
 - ✅ **中文文献**（方向里勾「中文文献」，OpenAlex / PubMed 服务端过滤，其余源本地判定）
 - ✅ **Agent 精读联动**（卡片上的 🔍 精读：把论文丢进新会话让 Agent 读全文，不自动发送）
 - ✅ **150 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
-- ⬜ 本地 git 提交：**本机没有 git 可执行文件**，无法提交（第十一节）
+- ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
 
@@ -185,17 +185,17 @@ window.__ModuleLoader__.load({
 
 > **2026-10-21 新机器更新**：下表第一行是旧机路径，已失效。新机见第十一节 11.1。
 > 当前可用的是 `C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`（v24.21.0）
-> 或 `G:\DSH\resources\runtime\bin\node.cmd`；**git 完全不存在**。
+> 或 `G:\DSH\resources\runtime\bin\node.cmd`；git 本轮现装到 `C:\Users\<user>\.dsh\tools\mingit\cmd\git.exe`（见 11.10）。
 
 | 工具 | 路径 | 备注 |
 | --- | --- | --- |
 | node（旧机） | `C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe` | v24.21.0，**不在 PATH** |
 | git（旧机） | `C:\Users\<user>\AppData\Local\Programs\PortableGit\cmd\git.exe` | 2.56.0，**不在 PATH**（从 npmmirror 装的 PortableGit） |
 | node（新机） | `C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe` | v24.21.0，可用 |
-| git（新机） | ❌ **不存在** | 见 11.1 |
+| git（新机） | `C:\Users\<user>\.dsh\tools\mingit\cmd\git.exe` | 2.56.0 MinGit，**不在 PATH**，本轮从 npmmirror 下载解压（11.10） |
 
-语法检查：`& $node --check <file>`，九个 JS 文件都要过一遍（`index.js` / `client.js` / `radar/*.js` 七个）。
-单测：`& $node --test test/*.test.js`（**不能只给目录**）。
+语法检查：`& $node --check <file>`，十个 JS 文件都要过一遍（`index.js` / `client.js` / `radar/*.js` 八个）。
+单测：`& $node --test --experimental-test-isolation=none test/*.test.js`（**不能只给目录**；沙箱里必须加 isolation flag）。
 
 ### DSH 插件开发的坑（全部踩过，别再踩）
 
@@ -369,7 +369,7 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 | 7 | **摘要是串行的** | ✅ 已修 | `mapLimit(fresh, 3, ...)`，实测 8 篇从 30s+ 降到 18s |
 | 8 | **邮件 HTML 很朴素** | ✅ 已修 | `mail.js` 新增 `digestToHtml()`，table + 内联样式卡片 |
 | 9 | **定时靠自建 5 分钟 tick** —— 没用 `ctx.schedule` | ✅ 无需改（已查清） | `ctx.schedule` 并不存在：`timer` 服务的公开 API 就是 `timeout/interval/throttle/debounce`（`setTimeout/setInterval` 是 `timeout/interval` 的 deprecated 别名），`schedule` 是另一个包 `@deepseek-ai/dsh-schedule` 的**会话提醒**服务，跟插件定时器无关。现有 `ctx.timer.interval` 已是正确用法，详见第十一节 11.9 |
-| 10 | **没有 git remote** | ⬜ 阻塞 | 本机无 `git.exe`（`D:\Program Files\Git` 是空目录），见第十一节 |
+| 10 | **没有 git remote** | ⬜ 仍不推 GitHub（用户决策） | 本地提交已补上（`71c6c20`），git 用本轮现装的 MinGit，见 11.10 |
 
 ---
 
@@ -485,7 +485,8 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 （同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 150 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
-**14. git remote** ⬜ 待做（本机没有 git 可执行文件，见第十一节）
+**14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
+本轮装了 MinGit 并提交 `71c6c20`，详见 11.10。
 
 ---
 
@@ -697,11 +698,11 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/state" `
 | `DSH_HOME` | — | `C:\Users\<user>\.dsh` |
 | Web URL | 端口会变 | `http://127.0.0.1:61819`（`$env:DSH_WEB_URL`） |
 | node | 不在 PATH | `C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`（v24.21.0），或 `G:\DSH\resources\runtime\bin\node.cmd` |
-| **git** | PortableGit 2.56 | **完全没有 git.exe**（`C:\Program Files\Git`、`D:\Program Files\Git`（空目录）、`C:\Users\<user>\AppData\Local\Programs\PortableGit` 都没有；`Get-ChildItem D:\ -Filter git.exe -Recurse -Depth 3` 无结果） |
+| **git** | PortableGit 2.56 | 原本**完全没有 git.exe**（`C:\Program Files\Git`、`D:\Program Files\Git`（空目录）、`C:\Users\<user>\AppData\Local\Programs\PortableGit` 都没有；`Get-ChildItem D:\ -Filter git.exe -Recurse -Depth 3` 无结果）→ 本轮已装 MinGit，见 11.10 |
 | 用户数据 | 有 `state.json` | **没迁过来**，插件首次启动自动建了空的 |
 
-**结论**：`git commit` 在这台机器上做不到。仓库 `.git/` 完整（`refs/heads/main = 35fa645`，53 个 loose object），
-只是没有可执行文件。要么装 git，要么就一直保持「改完文件不提交」。
+**结论**：仓库 `.git/` 一直是完整的（`refs/heads/main` 从 `35fa645` 走到 `71c6c20`），只是原本没有可执行文件。
+11.10 记录了怎么用 npmmirror 上的 MinGit 补上这个缺口。
 
 ### 11.2 沙箱 ACL 事故（开工时全盘写不进去）
 
@@ -868,7 +869,55 @@ async function readObject(sha) {
    - 精读结论回写：把会话 id 存进 item，卡片显示「已精读」并能跳回会话；
    - 邮件里也放「精读」深链（需要能带 prompt 打开新会话的 URL scheme，尚未勘察）；
    - `semanticscholar` 源（无 key 会 429，需要限流）。
-8. **git** —— 装个 git（`winget install Git.Git` 或便携版），然后 `git add -A && git commit`。
-   本机确实没有 git.exe（`D:\Program Files\Git` 是空目录），所以这轮所有改动都还没有提交。
-   注意 `.gitignore` 已排除 `state.json`，但 `tmp-*.mjs` 之类临时脚本要确认没被带进去。
+8. ~~**git**~~ ✅ 已补上。本轮从 npmmirror 下了 MinGit 2.56.0 解压到
+   `C:\Users\<user>\.dsh\tools\mingit\`，并完成一次本地提交 `71c6c20`（29 文件 / +5064 −212）。
+   细节见 11.10。仍然**没有 remote**（用户决策：只做本地提交，不推 GitHub）。
+
+### 11.10 补装 git（MinGit）与首次提交
+
+原本这台机器上没有任何 `git.exe`（见 11.1）。`winget` 虽然存在（`C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\winget.exe`），
+但调用直接返回 `exit=-1978335231`（0x8A150001，即 winget 本身没装好/未初始化），走不通。于是改从 npmmirror 直接下便携版：
+
+```powershell
+# 1) 列版本（找最新的 vX.Y.Z.windows.N）
+#    https://registry.npmmirror.com/-/binary/git-for-windows/
+# 2) 下 MinGit（比 PortableGit 小一半，够用：commit / status / log / diff 都有）
+#    https://registry.npmmirror.com/-/binary/git-for-windows/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip
+#    → 39806486 字节
+# 3) 解压到持久位置（沙箱里不能写 C:\Users\<user>\.dsh\tools\，要用 danger-full-access 跑这一步）
+#    Expand-Archive -Path mingit.zip -DestinationPath C:\Users\<user>\.dsh\tools\mingit
+```
+
+装好之后：
+
+```powershell
+$git = 'C:\Users\<user>\.dsh\tools\mingit\cmd\git.exe'
+cd I:\skill\dsh-research-radar
+& $git config core.autocrlf false   # 关键：不设的话 git 会把 LF 全改写成 CRLF
+& $git add -A
+& $git commit -F <UTF-8 消息文件>
+```
+
+**三个坑**：
+
+1. **`.git` 目录在沙箱里写不进去**。DSH 的工作区授权 ACE 只落在工作区根目录
+   （`I:\skill\dsh-research-radar` 上有 `S-1-4-570429532-510903478` 的 `Write/Delete` 允许项），
+   `.git` 子目录没有这个 ACE（`radar\` 下也没有，`test\` 和 `tmp-git\` 有，因为它们是后建的、继承了父目录 ACE）。
+   表现是 `error: could not lock config file .git/config: Permission denied`、`Set-Content .git\probe.tmp` 被拒。
+   解法：`git config` / `add` / `commit` 这几条命令用 **danger-full-access** 跑（本轮就是这么做的），
+   或者干脆在普通终端里跑。注意 `Get-Acl .git` 里 `NT AUTHORITY\Authenticated Users Allow Modify` 是
+   **继承自 `I:\`** 的，而 `I:\` 那个 ACE 是 `inherited=False` 的普通用户 ACE —— 受限令牌不认它。
+2. **`core.autocrlf` 必须先关**。仓库里全是 LF（`.gitattributes` 不存在），Windows 版 git 默认
+   `core.autocrlf=true`，`git add` 会警告 `LF will be replaced by CRLF` 并把工作区文件改写，
+   于是「只改了几行」的 diff 会变成整文件重写。本轮已 `git config core.autocrlf false`（写进 `.git/config`）。
+3. **提交消息走文件不走 `-m`**。中文消息用 `-m` 在 PowerShell 里会被按 ANSI 传参毁掉，
+   正确做法：`[System.IO.File]::WriteAllText($f, $msg, (New-Object System.Text.UTF8Encoding($false)))` 然后 `git commit -F $f`。
+   提交后校验：`git log -1 --format=%s%n%b` 用 `execFileSync(..., {encoding:'utf8'})` 读回来，
+   确认 0 个 U+FFFD 且含中文 —— 本轮验证通过（subject: `feat: 修完 P0/P1 缺陷并补 P2 能力，加 150 个单测`）。
+
+提交结果：`71c6c20`（parent `35fa645`），29 文件、+5064 −212，`git status --porcelain` 干净。
+暂存区里没有任何 `tmp-*` / `.gui-index.html` / `.combo.js` / `*.bak` 残留（`.gitignore` 已覆盖）。
+
+> 想把它加进 PATH 就 `$env:PATH = 'C:\Users\<user>\.dsh\tools\mingit\cmd;' + $env:PATH`，
+> 但 MinGit 的 `cmd\` 里只有 `git.exe`，`usr\bin\` 才是全套 POSIX 工具，别指望 `bash` / `ssh` 之类。
 
