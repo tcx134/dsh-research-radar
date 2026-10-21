@@ -126,6 +126,9 @@ function normalizeTopic(raw) {
     languages: normalizeLanguages(raw.languages),
     enabled: asBool(raw.enabled, true),
     createdAt: asString(raw.createdAt, new Date().toISOString()),
+    // 这个方向上一次真正扫过的时间。增量窗口按它算：新建的方向没有这个值，
+    // 首次扫描必须用完整的 lookbackDays，否则会漏掉窗口内的老论文。
+    lastScanAt: asString(raw.lastScanAt, ''),
   }
 }
 

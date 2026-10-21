@@ -60,7 +60,7 @@
 - ✅ **趋势统计**（第四个页签：周柱状图 + 来源 / 期刊 / 作者 / 标签榜单）
 - ✅ **中文文献**（方向里勾「中文文献」，OpenAlex / PubMed 服务端过滤，其余源本地判定）
 - ✅ **Agent 精读联动**（卡片上的 🔍 精读：把论文丢进新会话让 Agent 读全文，不自动发送）
-- ✅ **150 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **152 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -94,7 +94,7 @@ I:\skill\dsh-research-radar\
 │   ├── mail.js     543 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
 │   ├── scan.js     374 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
 │   └── stats.js    181 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
-├── test/                 14 个文件 / 150 个用例（node:test，零依赖）
+├── test/                 14 个文件 / 152 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -326,7 +326,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，150 个用例，~730ms）
+# 0. 单测（最快，152 个用例，~750ms）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -413,12 +413,19 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 | 否则 | `ceil(间隔天数) + 2`，且 ≥ `MIN_LOOKBACK_DAYS=2`，且 ≤ 配置值 |
 
 - `MIN_LOOKBACK_DAYS=2` 是给「论文在线日期比抓取日期晚一两天」留的余量，跨零点不会漏。
-- `runScan` 把结果写进 `result.lookbackDays`，并传给每个源的 `collectFromSource`；
+- **窗口按方向各算一份**（2026-10-21 修）：`lastScanAt` 从 `settings.scan` 挪到了每个 topic 上
+  （`normalizeTopic` 新增 `lastScanAt`，缺省 `''`；`runScan` 扫完写回被扫的方向）。
+  否则「刚新建的方向」会被全局的旧 `lastScanAt` 一起收窄成 2–3 天，首次扫描只能看到最近几天的论文。
+  规则：方向自己的 `lastScanAt` 为空 → 用完整配置窗口；有值 → 按上表收窄。
+  `settings.scan.lastScanAt` 仍保留（面板显示「上次扫描」、定时器判断间隔用），但不再参与窗口计算。
+- `runScan` 把每个方向实际用的窗口写进 `result.scannedTopics[i].lookbackDays`，
+  `result.lookbackDays` 取其中的最大值（对外报告「这次最多往回看多少天」）；
   `options.lookbackDays` 可强制指定（测试用）。
-- `GET /state` 的 `status.effectiveLookbackDays` 会返回**下一次**扫描要用的窗口，面板设置页显示成「本次窗口: N 天」。
+- `GET /state` 的 `status.effectiveLookbackDays` 取所有**启用**方向里最宽的那个，面板设置页显示成「本次窗口: N 天」。
+- `POST /scan` 的响应新增 `lookbackDays`（以前只在 `runScan` 内部有，HTTP 层漏掉了）。
 - 顺手修了 `fetchBiorxiv` 写死 30 天的问题（之前 `lookbackDays` 对它无效，缺陷 #4 的同类漏网）。
 - 测试：`test/scan.test.js` 新增 6 个用例（无记录 / 1 小时 / 10 天 / 很久 / 未来 / 非法配置值）
-  + 2 个 `runScan` 集成用例（显式窗口透传、自动收窄）。
+  + 4 个 `runScan` 集成用例（显式窗口透传、按方向自动收窄、新方向不被全局收窄、扫完写回方向的 `lastScanAt`）。
 
 **10. 中文文献** ✅ 已完成（2026-10-21）
 用户是做材料/力学的，中文文献（CNKI / 万方）没有公开 API —— 但**不需要**它们也能做：
@@ -486,12 +493,12 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ### P3 —— 工程化
 
 **13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**150 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+`node --test test/*.test.js`，**152 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 语言过滤、并发限流、增量窗口、分页筛选、HTTP 路由、Config schema、趋势统计、邮件 HTML、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 150 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 152 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -506,7 +513,7 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 1. 读 `README.md`（面向用户）→ 读本文件第四节（环境约束）
 2. 跑第五节的语法检查 + `/state` 端点，确认插件还活着
 3. 用 bcdp 打开 token URL，确认面板四个 tab 都能渲染
-4. **跑一遍单测**：`node --test test/*.test.js`，应该是 150 pass / 0 fail
+4. **跑一遍单测**：`node --test test/*.test.js`，应该是 152 pass / 0 fail
    （在 DSH 沙箱里跑要加 `--experimental-test-isolation=none`，否则 `spawn EPERM`，见第七节 P3 第 13 条）
 5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；剩下的都是新功能，不是修缺陷
 6. 每改完一个文件 `node --check`，改完 Host 侧热重载，改完 Client 侧刷新页面验证
@@ -751,10 +758,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `client.js` | 筛选器（全部/未读/收藏 + 计数）、方向下拉、`loadMore()`、`patchItem()`、`markAllRead()`；`ItemCard({item,t,onToggleRead,onToggleStar,onDeepRead})`；**🔍 精读按钮** + `buildDeepReadPrompt(item,locale)` + `startAgentSession(prompt)`（模块级 `clientContext` 接 `apply(ctx)` 的 ctx，走 `uiWorkspace.startSession`）；第四个页签「趋势」（`RankList` + 周柱状图）；方向表单的「文献语言」复选框；新增 CSS `.drr-card-read` / `.drr-dot` / `.drr-chip-star` / `.drr-seg` / `.drr-more` / `.drr-stat*` / `.drr-chart*` / `.drr-list*` / `.drr-btn-deep`；DICT 加 35+ 个键 |
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`；`scripts.test = "node --test test/*.test.js"` |
 
-### 11.4 测试（150 个用例，全部通过）
+### 11.4 测试（152 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 150 / fail 0
+node --test test/*.test.js   →   pass 152 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -767,7 +774,7 @@ node --test test/*.test.js   →   pass 150 / fail 0
 | `test/sources.test.js` | 13 | `normalizeQuery` 的 strong 判定、`scoreItem` 打分、`invertAbstract`、六源标签 |
 | `test/finalize.test.js` | 11 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期 |
 | `test/language.test.js` | 14 | `languages` 归一化、zh+en 折成 `[]`、`detectLanguage` 四种输入、`finalize` 的语言过滤与 strict 叠加、store 落盘 |
-| `test/scan.test.js` | 16 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例 + `runScan` 窗口透传 2 例 |
+| `test/scan.test.js` | 16 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例 + `runScan` 窗口透传/按方向收窄 4 例 |
 | `test/select-fresh.test.js` | 8 | 跨源只留高分那条、跨方向、seen 的 DOI/标题键命中、脏候选 |
 | `test/paginate.test.js` | 10 | 分页、筛选、非法参数夹取（**含 `null` → 默认 50**）、`/item`、`/mark-all-read`、收藏落盘 |
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
@@ -948,6 +955,50 @@ cd I:\skill\dsh-research-radar
 
 提交结果：`71c6c20`（parent `35fa645`），29 文件、+5064 −212，`git status --porcelain` 干净。
 暂存区里没有任何 `tmp-*` / `.gui-index.html` / `.combo.js` / `*.bak` 残留（`.gitignore` 已覆盖）。
+
+### 11.11 重启后的真机验收 + 增量窗口改成按方向算
+
+**用户重启桌面应用后，新代码终于生效了**（重启前 host 里一直挂着旧 `index.js`，见 11.9 第 5 条）。
+注意端口会变：重启后是 `http://127.0.0.1:55633`（重启前是 `61819`），token 也是每进程新生成的。
+
+验收结果（全部带 header `x-dsh-research-radar: 1`）：
+
+| 检查项 | 结果 |
+| --- | --- |
+| `GET /state` | 200，`page.total=4`、`counts.unread=4`、`topics=1` |
+| `status` 键 | `scanning,lastError,storePath,scanIntervalHours,effectiveLookbackDays` ✅ 新代码 |
+| `GET /stats?days=90` | 200（重启前 405），`total=4`、`weeks=1`、`bySource=[openalex:4]` |
+| `?limit=2` / `?limit=2&offset=2` | 2 条 `hasMore=true` / 2 条 `hasMore=false` |
+| `?filter=starred` / `?filter=unread` | 0 条 / 4 条，`counts` 三键齐全 |
+| `?limit=99999` | `page.limit` 夹到 **500** |
+| `POST /preview-mail` | 200，`htmlLen=23520`，含 `border-left:3px solid #4176e6`，**无 `<style>`、无 `class=`** |
+| 邮件里的面板链接 | `http://127.0.0.1:55633/?token=5eT1i...`（`resolvePanelUrl` 拿到 connection 服务） |
+| Client bundle（rev `9b7850eae9ae`） | 3984647 字节，含 `drr-btn-deep` / `deep_read` / `filter_items` / `stats_days` / `drr-seg` / `mark-all-read` / `languages_hint` / `loadStats` |
+
+**验收时发现并修掉的真 bug：增量窗口把「刚建的方向」也算窄了。**
+`lastScanAt` 原来只存在 `settings.scan` 上（全局一个），于是新建方向后第一次扫描，
+窗口按「全局上次扫描」算成 3 天 —— 用户加了个新方向，却只能看到最近 3 天的论文，老论文永远进不来。
+修法：
+
+- `radar/store.js` 的 `normalizeTopic` 新增 `lastScanAt: asString(raw.lastScanAt, '')`。
+- `radar/scan.js`：`lookbackFor(topic) = forcedLookback ?? effectiveLookbackDays(topic.lastScanAt, configured)`，
+  每个方向各算一份窗口传给 `collectFromSource`；扫完在 `store.mutate` 里把 `lastScanAt` 写回**被扫到的**方向
+  （`scannedTopicIds` 里有的才写）。`result.scannedTopics[i].lookbackDays` 记录每个方向实际用的窗口，
+  `result.lookbackDays` 取最大值（对外报告用）。
+- `radar/scan.js` 顶部先声明 `usedLookbacks`，`selectFresh` 之后再赋 `result.lookbackDays`（因为要等循环跑完）。
+- `index.js` 的 `publicState`：`status.effectiveLookbackDays` 改成取所有**启用**方向里最宽的那个；
+  `POST /topics` 与 Agent `add_topic` 建方向时显式写 `lastScanAt: ''`。
+- `POST /scan` 的 HTTP 响应补上 `lookbackDays`（以前只在 `runScan` 内部有，HTTP 层漏了），
+  Agent 的 `scan` 也补了。
+
+**验证方式（不重启也能证明 Host 代码对）**：临时脚本 `import('./index.js')` + stub ctx 跑 `apply()`，
+假 `req` 要同时提供 `on(ev, fn)` 和 `Symbol.asyncIterator`（`readBody` 用 `req.on('data'/'end')`，
+只给 async iterator 会报 `req.on is not a function`），假 `res` 要给 `setHeader`/`writeHead`/`write`/`end`。
+实测输出：`before effectiveLookbackDays = 30`（新方向无历史）→ 扫描后 `lastScanAt` 两个方向都「有」→
+`after effectiveLookbackDays = 3`。修完这条之后单测 **152 pass / 0 fail**。
+
+**这个改动需要再重启一次**（Host 代码变了）；Client 不用改，刷新页面即可。
+
 
 > 想把它加进 PATH 就 `$env:PATH = 'C:\Users\<user>\.dsh\tools\mingit\cmd;' + $env:PATH`，
 > 但 MinGit 的 `cmd\` 里只有 `git.exe`，`usr\bin\` 才是全套 POSIX 工具，别指望 `bash` / `ssh` 之类。

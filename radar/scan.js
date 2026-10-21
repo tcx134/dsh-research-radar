@@ -250,12 +250,18 @@ export async function runScan(ctx, config, store, options = {}) {
    * 本次扫描实际使用的时间窗口。上一次扫描之后只过了几小时的话，没必要再扫
    * 30 天 —— 那些论文全在 `seen` 里，重扫只是白烧配额。规则见
    * `effectiveLookbackDays()`。`options.lookbackDays` 可强制指定（测试用）。
+   *
+   * **按方向各算一份**：`lastScanAt` 记在方向上，所以刚新建的方向没有历史，
+   * 首次扫描必须用完整的配置窗口（否则「刚加的方向只能看到最近 2 天」）。
+   * `result.lookbackDays` 取所有方向里的最大值，只用于对外报告。
    */
-  const lookbackDays =
+  const configuredLookback = settings.scan.lookbackDays
+  const forcedLookback =
     Number.isFinite(Number(options.lookbackDays)) && Number(options.lookbackDays) > 0
       ? Math.round(Number(options.lookbackDays))
-      : effectiveLookbackDays(settings.scan.lastScanAt, settings.scan.lookbackDays)
-  result.lookbackDays = lookbackDays
+      : null
+  const lookbackFor = (topic) =>
+    forcedLookback ?? effectiveLookbackDays(topic.lastScanAt, configuredLookback)
 
   /**
    * 本次扫描抓到的全部候选（尚未去重）。同一篇论文可能被多个源、多个方向各抓
@@ -264,8 +270,13 @@ export async function runScan(ctx, config, store, options = {}) {
    * @type {{ item: object, keys: string[] }[]}
    */
   const candidates = []
+  const scannedTopicIds = []
+  const usedLookbacks = []
   for (const topic of targets) {
-    result.scannedTopics.push({ id: topic.id, name: topicLabel(topic) })
+    const topicLookback = lookbackFor(topic)
+    usedLookbacks.push(topicLookback)
+    result.scannedTopics.push({ id: topic.id, name: topicLabel(topic), lookbackDays: topicLookback })
+    scannedTopicIds.push(topic.id)
     for (const source of topic.sources) {
       const { items, errors } = await collectFromSource({
         source,
@@ -273,7 +284,7 @@ export async function runScan(ctx, config, store, options = {}) {
         max: settings.scan.maxPerTopic,
         rss: settings.rss,
         api: settings.api,
-        lookbackDays,
+        lookbackDays: topicLookback,
       })
       for (const error of errors) {
         result.errors.push({ topic: topicLabel(topic), ...error })
@@ -303,6 +314,8 @@ export async function runScan(ctx, config, store, options = {}) {
 
   // 相关度从高到低排序 + 按规范化键去重，挑出真正要入库的新论文
   const fresh = selectFresh(candidates, state.seen)
+  // 对外报告用最宽的那个窗口（各方向可能不同：新方向 30 天，老方向 3 天）
+  result.lookbackDays = usedLookbacks.length > 0 ? Math.max(...usedLookbacks) : null
 
   // 逐篇生成结构化摘要（限流并发；失败不阻断其它论文，单篇最多重试一次）
   if (settings.scan.summarize && fresh.length > 0) {
@@ -326,7 +339,12 @@ export async function runScan(ctx, config, store, options = {}) {
     if (draft.items.length > MAX_ITEMS_KEPT) {
       draft.items = draft.items.slice(0, MAX_ITEMS_KEPT)
     }
-    draft.settings.scan.lastScanAt = nowIso()
+    const scannedAt = nowIso()
+    // 增量窗口按方向记：刚加的方向下次才收窄，不会因为别的方向扫过就被一起收窄
+    for (const topic of draft.topics) {
+      if (scannedTopicIds.includes(topic.id)) topic.lastScanAt = scannedAt
+    }
+    draft.settings.scan.lastScanAt = scannedAt
     draft.settings.scan.lastScanNew = fresh.length
   })
 

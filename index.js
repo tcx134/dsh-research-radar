@@ -168,6 +168,12 @@ export function apply(ctx, config) {
   async function publicState(query = {}) {
     const state = await store.load()
     const page = paginateItems(state.items, query)
+    // 增量窗口按方向算（radar/scan.js 里 lastScanAt 记在方向上）。面板只需要一个
+    // 代表性数字，取所有启用方向里最宽的那个 —— 也就是「这次最多往回看多少天」。
+    const enabledTopics = state.topics.filter((t) => t.enabled !== false)
+    const windows = enabledTopics.map((t) =>
+      effectiveLookbackDays(t.lastScanAt, state.settings.scan.lookbackDays),
+    )
     return {
       topics: state.topics,
       items: page.items,
@@ -186,10 +192,8 @@ export function apply(ctx, config) {
         scanIntervalHours: state.settings.scan.intervalHours,
         // 下次扫描实际会用多大的窗口（增量窗口，见 radar/scan.js 的
         // effectiveLookbackDays）。面板把它显示出来，方便确认优化生效。
-        effectiveLookbackDays: effectiveLookbackDays(
-          state.settings.scan.lastScanAt,
-          state.settings.scan.lookbackDays,
-        ),
+        effectiveLookbackDays:
+          windows.length > 0 ? Math.max(...windows) : effectiveLookbackDays(null, state.settings.scan.lookbackDays),
       },
     }
   }
@@ -345,6 +349,8 @@ export function apply(ctx, config) {
                     languages,
                     enabled: payload.enabled !== false,
                     createdAt: new Date().toISOString(),
+                    // 空串 = 从没扫过 → 首次扫描用完整窗口（增量窗口见 radar/scan.js）
+                    lastScanAt: '',
                   })
                 } else {
                   existing.name = name
@@ -456,6 +462,8 @@ export function apply(ctx, config) {
             sendJson(res, 200, {
               ok: true,
               newCount: result.newItems.length,
+              // 本次实际使用的回溯窗口（增量抓取可能比配置值窄），面板会显示出来
+              lookbackDays: result.lookbackDays ?? null,
               errors: result.errors,
               mail: result.mail,
               items: result.newItems,
@@ -665,6 +673,7 @@ export function apply(ctx, config) {
               languages,
               enabled: true,
               createdAt: new Date().toISOString(),
+              lastScanAt: '',
             })
             return state.topics
           })
@@ -683,6 +692,7 @@ export function apply(ctx, config) {
           return {
             ok: true,
             newCount: result.newItems.length,
+            lookbackDays: result.lookbackDays ?? null,
             errors: result.errors,
             items: result.newItems.map((i) => ({
               title: i.title,

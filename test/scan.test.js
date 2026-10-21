@@ -155,6 +155,7 @@ async function storeWithTopic(t, extra = {}) {
         keywords: ['metal rubber'],
         sources: ['rss'],
         enabled: true,
+        ...(extra.topic ?? {}),
       },
     ],
     items: [],
@@ -169,7 +170,7 @@ test('runScan 把增量窗口传给抓取层，并记在 result 上', async (t) 
   const { store } = await storeWithTopic(t)
   const result = await runScan({}, {}, store, { lookbackDays: 7 })
   assert.equal(result.lookbackDays, 7)
-  assert.deepEqual(result.scannedTopics, [{ id: 't-a', name: '测试方向' }])
+  assert.deepEqual(result.scannedTopics, [{ id: 't-a', name: '测试方向', lookbackDays: 7 }])
   // 没有配 feed，只应有一条 rss 抓取错误；不应有 summary 错误（没有候选论文）
   assert.deepEqual(
     result.errors.map((e) => e.source),
@@ -178,9 +179,10 @@ test('runScan 把增量窗口传给抓取层，并记在 result 上', async (t) 
   assert.equal(result.newItems.length, 0)
 })
 
-test('runScan 不传 lookbackDays 时按上次扫描时间自动收窄', async (t) => {
+test('runScan 不传 lookbackDays 时按方向自己的上次扫描时间自动收窄', async (t) => {
   const recent = new Date(Date.now() - 2 * 3600e3).toISOString()
   const { store } = await storeWithTopic(t, {
+    topic: { lastScanAt: recent },
     settings: {
       scan: {
         enabled: true,
@@ -197,4 +199,36 @@ test('runScan 不传 lookbackDays 时按上次扫描时间自动收窄', async (
   // 2 小时前扫过 → ceil(2/24)=1 → 1+2=3 天
   assert.equal(result.lookbackDays, 3)
   assert.ok(result.lookbackDays < 30)
+})
+
+test('新方向首次扫描用完整窗口，不被全局 lastScanAt 收窄', async (t) => {
+  const recent = new Date(Date.now() - 2 * 3600e3).toISOString()
+  const { store } = await storeWithTopic(t, {
+    // 方向自己没有 lastScanAt（刚建的），全局 lastScanAt 却是 2 小时前
+    settings: {
+      scan: {
+        enabled: true,
+        intervalHours: 12,
+        maxPerTopic: 8,
+        summarize: true,
+        lookbackDays: 30,
+        lastScanAt: recent,
+        lastScanNew: 0,
+      },
+    },
+  })
+  const result = await runScan({}, {}, store, {})
+  // 必须用配置的 30 天，否则「刚加的方向只能看到最近 3 天」
+  assert.equal(result.lookbackDays, 30)
+  assert.equal(result.scannedTopics[0].lookbackDays, 30)
+})
+
+test('runScan 把扫描时间写到方向自己的 lastScanAt 上', async (t) => {
+  const { store } = await storeWithTopic(t)
+  await store.load()
+  assert.equal(store.get().topics[0].lastScanAt, '')
+  await runScan({}, {}, store, {})
+  const saved = store.get()
+  assert.ok(saved.topics[0].lastScanAt !== '')
+  assert.ok(Number.isFinite(Date.parse(saved.topics[0].lastScanAt)))
 })
