@@ -273,22 +273,31 @@ plugin_manager set_plugin({ action:'set_plugin', target:'include:dsh-research-ra
 plugin_manager set_plugin({ action:'set_plugin', target:'include:dsh-research-radar', enabled:true })
 ```
 
-**Client 半边改完要刷新页面**才生效。
+> **2026-10-21 补充**：上面这条走的是 GUI 里的 plugin_manager 工具（MCP/Agent 工具），本机**用不了**——
+> plugin-manager 插件的 `/api/plugin-manager/*` 路由在 desktop profile 里是 404（`web-ui-plugin-manager`
+> 在 profile patch 里是 `disabled: true`），带 cookie 404、带 query token 401，脚本调不动。
+> 而重跑 `dsh plugin --profile desktop add` **只会重新组合、不会替换已加载的宿主插件**
+> （`dsh-hmr` 的 `reconcileProfile()` 把变更模块放进 `pending`，日志原话：
+> `changed modules keep running their previous code until a restart`）。
+> **结论：改完 Host 代码只能重启桌面应用，或在 GUI 插件面板里 disable→enable 一次。**
+> 想在不重启的前提下证明新代码对，就 `import('./index.js')` + stub ctx 跑一遍 `apply()`（见 11.9 第 5 条）。
 
-**GUI 需要带 token 的 URL**，token 每进程新生成，端口也会变（当前 `http://127.0.0.1:54648`）。拿法：
+**Client 半边改完要刷新页面**才生效（host 按文件 mtime 自动换 `rev`，不用重启）。
 
-```js
-// 临时在 index.js 加端点，用完删掉
-GET /api/dsh-research-radar/__auth-url  →  { url: ctx.connection.authenticatedUrl(ctx.webServer.getOrigin()) }
-```
+**GUI 需要带 token 的 URL**，token 每进程新生成，端口也会变（当前 `http://127.0.0.1:61819`）。拿法：
 
-或者读运行时上下文里的 `DSH_WEB_URL`。
+- **最省事**：`POST /api/dsh-research-radar/preview-mail`（不需要 token），返回的 `html` 里就有
+  「在面板中查看」按钮，正则抓 `http://127.0.0.1:\d+/\?token=[A-Za-z0-9_-]+` 即可。
+  这个 URL 直接 `GET` 会 **303 + `Set-Cookie: dsh-auth-...`**，必须带 cookie 再请求 `/` 才拿到索引页。
+- 或者临时在 `index.js` 加端点，用完删掉：
+  `GET /api/dsh-research-radar/__auth-url` → `{ url: ctx.connection.authenticatedUrl(ctx.webServer.getOrigin()) }`。
+- 或者读运行时上下文里的 `DSH_WEB_URL`。
 
 **直接调 API 必须带 header**：
 
 ```powershell
 $h = @{'x-dsh-research-radar'='1'}
-Invoke-RestMethod -Uri 'http://127.0.0.1:54648/api/dsh-research-radar/state' -Headers $h
+Invoke-RestMethod -Uri 'http://127.0.0.1:61819/api/dsh-research-radar/state' -Headers $h
 ```
 
 POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写成 `????`，必须
@@ -853,13 +862,35 @@ async function readObject(sha) {
    只能用 `dsh plugin --profile desktop add` CLI，或在 GUI 里手动 disable→enable 一次插件 / 重启桌面应用。
    本轮结束时 host 里跑的**仍是旧版 `index.js`**：`GET /stats` 返回 405、`status` 缺 `effectiveLookbackDays`、
    `topics[0].languages` 为空。Client 半边不用重启（host 按文件 mtime 自动换 rev），Host 半边必须重载。
+
+   **⚠️ 实测：重跑 `dsh plugin add` 不会重载已加载的 Host 插件**。本轮又跑了一次
+   `dsh plugin --profile desktop add "link:I:/skill/dsh-research-radar"`（它确实改了 profile 的 `package.json`，
+   输出 `Done in 946ms`，`Packages: -42` 只是 pnpm 的增量统计，7 个插件与 `@local/dsh-research-radar` 链接都还在，
+   `node_modules` 176 个目录、`pnpm-lock.yaml` 正常），但等 4 秒后重探仍然是 `/stats` 405、
+   `status` 缺 `effectiveLookbackDays`。原因在 `dsh-hmr` 的 `reconcileProfile()` 返回值：
+   `if (pending.length > 0) this.ctx.logger.warn("changed modules keep running their previous code until a restart: %o", pending)`
+   —— 已加载模块即使磁盘变了，也只是进 `pending` 等重启，不会热替换。
+   （`dsh-base` 里 hmr 的配置是 `disabled: !!js "!ctx.get('profileContext')"` + `config.root: []`，
+   桌面 profile 下它是**启用**的，但启用不等于能替换已加载的宿主插件。）
+
+   **验证新代码正确性的替代办法**（不重启也能证明代码对）：在插件目录里直接 `import('./index.js')`，
+   用 stub ctx 跑 `apply()`，把真实的 `state.json` 走一遍。本轮实测：
+   ```
+   route: prefix /api/dsh-research-radar  tools: research_radar
+   GET /state        -> 200  items=4  statusKeys=scanning,lastError,storePath,scanIntervalHours,effectiveLookbackDays
+                              effectiveLookbackDays = 3   topic languages = [[]]
+   GET /stats?days=90-> 200  total=4 weeks=1 bySource=[{key:'openalex',count:4,label:'OpenAlex（SCI 期刊综合库）'}]
+                              byTag=[{key:'金属橡胶',count:4},...]
+   ```
+   → 代码本身没问题，纯粹是运行中的 host 还挂着旧模块。
+
    - 另一条路：**改 profile 的 `cordis.patch.yml`**。HMR 服务会监听 profile manifest 与两份用户 patch，
      文件一变就重新组合，从而重新 import 已链接包的最新磁盘内容（官方 README 原文：
      「HMR 的 profile 监听和 Plugin Manager 执行的 profile 重新组合，还会替换 profile 目录下已加载文件
      在磁盘上发生变化的插件…文件被原地更改的包，例如构建输出发生变化的已链接包…会在下一次此类重新组合时生效，
-     无需重启」）。所以只要往 patch 里加一个无害的配置项（或改一下已有项）就能触发重载。
-     **但第八节明令「不要手改 profile 的 cordis.patch.yml」**，所以这轮没这么干；真要走这条路请先跟用户确认，
-     并先备份（`cordis.patch.yml.bak-drr` 已在）。
+     无需重启」）。**但上面的实测已经证明「重新组合」这条路对本插件无效**（重跑 add 就触发了重新组合），
+     所以不要指望它；真要走请先跟用户确认，并先备份（`cordis.patch.yml.bak-drr` 已在）。
+   - **结论：只能重启桌面应用，或在 GUI 的插件面板里 disable→enable 一次 `dsh-research-radar`。**
 6. ~~**缺陷 #9：`ctx.schedule`**~~ ✅ 已查明**不需要改**。`timer` 服务的公开 API 是
    `timeout / interval / throttle / debounce`（`setTimeout / setInterval` 只是 `timeout / interval` 的
    deprecated 别名，`ctx.mixin("timer", [...])` 把六个都挂到 ctx 上）。`schedule` 是另一个独立包
