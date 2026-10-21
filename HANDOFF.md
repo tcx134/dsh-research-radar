@@ -482,14 +482,20 @@ export const Config = Schema.object({
 **打包命令**（在旧机器上，PowerShell）：
 
 ```powershell
-# 连 git 历史一起打
-Compress-Archive -Path 'F:\python\dsh-research-radar' `
-  -DestinationPath "$env:USERPROFILE\Desktop\research-radar.zip" -Force
+# 连 git 历史一起打（CreateFromDirectory 会把 .git 也带上；Compress-Archive 会跳过隐藏项）
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+  'F:\python\dsh-research-radar',
+  'F:\python\research-radar.zip',
+  [System.IO.Compression.CompressionLevel]::Optimal,
+  $true)
 
 # 配置单独打一份（别和代码混在一起，里面有邮箱授权码）
 Copy-Item "$env:USERPROFILE\.dsh\research-radar\state.json" `
   "$env:USERPROFILE\Desktop\radar-state.json"
 ```
+
+已实测：上面第一条命令产出 **854 KB / 95 个条目**（含 `.git\` 的 5 个提交），解压后 `node --check` 全部通过。
 
 > ⚠️ `state.json` 里的 SMTP 密码是**明文**（`settings.mail.pass`）。别把它传到网盘、别提交进 git。它位于插件目录之外，正常情况下不会被 `git add` 到；但如果为了「一起打包」把它复制进插件目录，一定要先加进 `.gitignore`。走微信/邮件传的话，用完就删。
 
