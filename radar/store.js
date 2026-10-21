@@ -1,6 +1,15 @@
 import { promises as fsp } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { migrateSeenKey, dedupeKeys } from './dedupe.js'
+
+/**
+ * `seen` 去重字典的保留策略：只留最近 180 天、最多 20000 条。
+ * 条数上限按「键」算而不是按论文算 —— 每篇论文会写入 1–3 个规范化键
+ * （arxiv / doi / 标题+年份），20000 条大约对应 7000–10000 篇论文。
+ */
+export const SEEN_MAX_AGE_DAYS = 180
+export const SEEN_MAX_ENTRIES = 20000
 
 /** 默认设置。任何缺失字段都会在读取时被补齐。 */
 export function defaultSettings() {
@@ -68,6 +77,22 @@ function asStringList(value, max = 30) {
 
 const KNOWN_SOURCES = new Set(['openalex', 'crossref', 'pubmed', 'arxiv', 'biorxiv', 'rss'])
 
+/** 语言过滤支持的值。空数组 = 不限语言。 */
+export const KNOWN_LANGUAGES = ['zh', 'en']
+
+/**
+ * 把用户勾选的语言整理成「下发给数据库的过滤条件」。
+ *
+ * 语义上「中英文都勾」等价于「不限语言」，所以这里直接折成空数组 ——
+ * 否则 OpenAlex 会拼出 `language:zh|en`，反而把德语 / 法语论文排除掉，
+ * 比不勾更严格，不符合用户「我全都要」的直觉。
+ */
+function normalizeLanguages(value) {
+  const list = Array.isArray(value) ? value.filter((v) => typeof v === 'string') : []
+  const unique = [...new Set(list.map((v) => v.trim().toLowerCase()).filter((v) => KNOWN_LANGUAGES.includes(v)))]
+  return unique.length >= KNOWN_LANGUAGES.length ? [] : unique
+}
+
 /**
  * 手改 state.json 时可能漏掉 id。用名称生成稳定的 id，
  * 保证同一份文件每次加载得到同一个值，不会让 items 的 topicId 失联。
@@ -97,6 +122,8 @@ function normalizeTopic(raw) {
     matchMode: raw.matchMode === 'all' ? 'all' : 'any',
     strict: asBool(raw.strict, true),
     sources: sources.length > 0 ? sources : ['openalex'],
+    // 空数组 = 不限语言（老数据没有这个字段，读出来就是「不限」，行为不变）
+    languages: normalizeLanguages(raw.languages),
     enabled: asBool(raw.enabled, true),
     createdAt: asString(raw.createdAt, new Date().toISOString()),
   }
@@ -126,7 +153,60 @@ function normalizeItem(raw) {
     summaryError: asString(raw.summaryError),
     discoveredAt: asString(raw.discoveredAt, new Date().toISOString()),
     read: asBool(raw.read, false),
+    starred: asBool(raw.starred, false),
   }
+}
+
+/**
+ * 清理 `seen` 去重字典（缺陷 #2：以前永不清理，state.json 会无限增长）。
+ *
+ * 规则：
+ *   1. `keepKeys` 里的键永不删除 —— 它们属于仍留在 `items` 里的论文，
+ *      删掉的话同一篇论文会被重新推一遍。
+ *   2. 超过 `maxAgeDays` 天的记录丢弃（时间戳解析不出来的按最旧处理）。
+ *   3. 剩下的按时间戳从新到旧排序，只保留前 `maxEntries` 条。
+ *
+ * @param {Record<string,string>} seen 原字典（key -> discoveredAt ISO 字符串）
+ * @param {{ keepKeys?: Iterable<string>, maxAgeDays?: number, maxEntries?: number, now?: number }} [options]
+ * @returns {{ seen: Record<string,string>, removed: number }}
+ */
+export function pruneSeen(seen, options = {}) {
+  const source = seen !== null && typeof seen === 'object' ? seen : {}
+  const maxAgeDays = Number.isFinite(Number(options.maxAgeDays)) ? Number(options.maxAgeDays) : SEEN_MAX_AGE_DAYS
+  const maxEntries = Number.isFinite(Number(options.maxEntries)) ? Number(options.maxEntries) : SEEN_MAX_ENTRIES
+  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now()
+  const keep = new Set()
+  if (options.keepKeys !== undefined && options.keepKeys !== null) {
+    for (const key of options.keepKeys) keep.add(String(key))
+  }
+
+  const cutoff = now - maxAgeDays * 86400000
+  const entries = []
+  for (const [key, value] of Object.entries(source)) {
+    const text = typeof value === 'string' ? value : ''
+    const at = Date.parse(text)
+    entries.push({ key, value: text, at: Number.isFinite(at) ? at : 0 })
+  }
+  // 从新到旧，保证「保留最近 N 条」是确定性的
+  entries.sort((a, b) => (b.at === a.at ? a.key.localeCompare(b.key) : b.at - a.at))
+
+  const next = {}
+  let removed = 0
+  let kept = 0
+  for (const entry of entries) {
+    if (keep.has(entry.key)) {
+      next[entry.key] = entry.value
+      kept += 1
+      continue
+    }
+    if (entry.at < cutoff || kept >= maxEntries) {
+      removed += 1
+      continue
+    }
+    next[entry.key] = entry.value
+    kept += 1
+  }
+  return { seen: next, removed }
 }
 
 function normalize(raw) {
@@ -144,7 +224,11 @@ function normalize(raw) {
 
   if (raw.seen !== null && typeof raw.seen === 'object') {
     for (const [key, value] of Object.entries(raw.seen)) {
-      if (typeof key === 'string' && key !== '') base.seen[key] = asString(value)
+      // 旧版直接存 item.id（形如 openalex:10.xxx），新版存规范键；
+      // 这里迁移成 `id:openalex:10.xxx`，否则升级后历史论文会被重推一遍。
+      const migrated = migrateSeenKey(key)
+      if (migrated === '') continue
+      base.seen[migrated] = asString(value)
     }
   }
 
@@ -246,13 +330,32 @@ export function createStore(ctx, config) {
     return queue
   }
 
+  /** 按当前 items 做一次 seen 剪枝（就地修改 state）。 */
+  function pruneSeenInPlace() {
+    const keepKeys = new Set()
+    for (const item of state.items) {
+      for (const key of dedupeKeys(item)) keepKeys.add(key)
+    }
+    const result = pruneSeen(state.seen, { keepKeys })
+    state.seen = result.seen
+    return result.removed
+  }
+
   return {
     path: file,
     load,
     get: () => state,
+    pruneSeen: async () => {
+      await load()
+      const removed = pruneSeenInPlace()
+      if (removed > 0) await persist()
+      return removed
+    },
     async mutate(fn) {
       await load()
       const result = await fn(state)
+      // 每次写盘顺带剪枝，避免 seen 无限增长（缺陷 #2）
+      pruneSeenInPlace()
       await persist()
       return result
     },

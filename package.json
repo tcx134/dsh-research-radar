@@ -14,15 +14,21 @@
     "index.js",
     "client.js",
     "cordis.patch.yml",
+    "radar/config.js",
+    "radar/dedupe.js",
     "radar/store.js",
     "radar/sources.js",
     "radar/summarize.js",
     "radar/mail.js",
     "radar/scan.js",
+    "radar/stats.js",
     "locale/en.json",
     "locale/zh.json",
     "icon.svg"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {

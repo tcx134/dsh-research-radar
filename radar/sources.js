@@ -151,8 +151,26 @@ export function normalizeQuery(topic) {
     matchMode: topic?.matchMode === 'all' ? 'all' : 'any',
     // strict = 只保留命中「主要关键词」的结果，用来压掉 MR 这类短缩写的误命中
     strict: topic?.strict !== false,
+    // 语言白名单（zh / en）。空数组 = 不限语言。
+    // 中英文都勾在 store 层已折成空数组，这里再兜一次，避免直接传对象绕过。
+    languages: normalizeLanguages(asList(topic?.languages)),
     strong: strongKeywords(keywords),
   }
+}
+
+const LANGUAGE_NAMES = { zh: '中文', en: '英文' }
+
+/** zh / en 白名单归一化；两个都选等价于不限语言（返回空数组）。 */
+function normalizeLanguages(list) {
+  const unique = [...new Set(list.map((v) => String(v).trim().toLowerCase()).filter((v) => v === 'zh' || v === 'en'))]
+  return unique.length >= 2 ? [] : unique
+}
+
+/** 给面板 / 邮件展示用：把语言白名单说成人话。 */
+export function describeLanguages(languages) {
+  const list = Array.isArray(languages) ? languages : []
+  if (list.length === 0) return ''
+  return list.map((code) => LANGUAGE_NAMES[code] ?? code).join('、')
 }
 
 /**
@@ -163,6 +181,9 @@ export function normalizeQuery(topic) {
 function strongKeywords(keywords) {
   return keywords.filter((kw) => kw.includes(' ') || kw.includes('-') || kw.length >= 6)
 }
+
+/** 供测试使用：主要关键词判定是「金属橡胶 vs 磁共振」的核心逻辑，需要能单测。 */
+export { strongKeywords }
 
 export function isEmptyQuery(query) {
   return (
@@ -233,6 +254,37 @@ export function scoreItem(item, query) {
   return { matchedIn: parts.join(' '), score, strongHit, hitKeywords }
 }
 
+/**
+ * 猜一条记录的语言（zh / en），认不出来返回 ''。
+ *
+ * 只在源自己不做语言过滤时才用得上（Crossref 没有 language filter，
+ * arXiv / bioRxiv / RSS 更是纯本地过滤）。判据很土但够用：
+ *   - 标题 / 摘要里中日韩统一表意文字占「有效字符」的比例 >= 20% → 中文；
+ *     阈值取 20% 是因为中文期刊的英文标题 + 中文摘要很常见，反过来也常见；
+ *   - 有拉丁字母但几乎没有汉字 → 英文；
+ *   - 都没有（纯符号 / 纯数字）→ 认不出来，交给「不限语言」放行。
+ */
+export function detectLanguage(item) {
+  const text = `${item?.title ?? ''} ${item?.abstract ?? ''}`
+  if (text.trim() === '') return ''
+  const cjk = (text.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g) ?? []).length
+  const latin = (text.match(/[A-Za-z]/g) ?? []).length
+  const total = cjk + latin
+  if (total === 0) return ''
+  if (cjk / total >= 0.2) return 'zh'
+  if (latin > 0) return 'en'
+  return ''
+}
+
+/** 语言白名单不匹配 → 丢弃。认不出语言的记录一律放行，宁可多推也不误杀。 */
+function isWrongLanguage(item, query) {
+  const allow = Array.isArray(query.languages) ? query.languages : []
+  if (allow.length === 0) return false
+  const guess = detectLanguage(item)
+  if (guess === '') return false
+  return !allow.includes(guess)
+}
+
 /** 排除词命中（标题或摘要）→ 丢弃。 */
 function isExcluded(item, query) {
   if (query.exclude.length === 0) return false
@@ -257,6 +309,7 @@ function finalize(items, query, max, localFilter) {
   for (const item of items) {
     if (item === null || typeof item.id !== 'string' || item.id === '') continue
     if (seen.has(item.id)) continue
+    if (isWrongLanguage(item, query)) continue
     if (isExcluded(item, query)) continue
     const { matchedIn, score, strongHit, hitKeywords } = scoreItem(item, query)
     if (query.matchMode === 'all' && query.keywords.length > 1) {
@@ -280,6 +333,9 @@ function finalize(items, query, max, localFilter) {
   })
   return out.slice(0, Math.max(1, max))
 }
+
+/** 供测试使用：本地过滤 + 严格相关性判定是「推给我的文章不相关」的根因所在。 */
+export { finalize, isExcluded }
 
 /* -------------------------------- OpenAlex ------------------------------- */
 
@@ -359,6 +415,11 @@ function openAlexFilter(query, venueIds, lookbackDays) {
   if (query.institutions.length > 0) {
     const terms = query.institutions.map((i) => `"${cleanPhrase(i)}"`).filter((t) => t !== '""')
     if (terms.length > 0) parts.push(`raw_affiliation_strings.search:${terms.join('|')}`)
+  }
+  // 语言过滤（P2-10 中文文献）：OpenAlex 有 language 字段，竖线是同维 OR。
+  // 实测 language:zh|en 的 count 正好等于 zh + en 之和，说明语法有效。
+  if (Array.isArray(query.languages) && query.languages.length > 0) {
+    parts.push(`language:${query.languages.join('|')}`)
   }
   const today = new Date().toISOString().slice(0, 10)
   // 上限卡在今天：OpenAlex 里存在出版日期填到未来的脏数据，不卡会一直推「未来论文」。
@@ -540,6 +601,11 @@ function pubmedTerm(query) {
   if (query.institutions.length > 0) {
     clauses.push(`(${query.institutions.map((i) => `"${cleanPhrase(i)}"[ad]`).join(' OR ')})`)
   }
+  // 语言过滤：PubMed 用 chi[la] / eng[la]，竖线在这里无效，必须显式 OR。
+  if (Array.isArray(query.languages) && query.languages.length > 0) {
+    const tags = query.languages.map((code) => (code === 'zh' ? 'chi[la]' : 'eng[la]'))
+    clauses.push(`(${tags.join(' OR ')})`)
+  }
   let term = clauses.join(' AND ')
   if (query.exclude.length > 0) {
     term += ` NOT (${query.exclude.map((w) => `"${cleanPhrase(w)}"[tiab]`).join(' OR ')})`
@@ -563,13 +629,33 @@ function pubmedDate(block) {
   return `${year}-${String(Math.min(12, Math.max(1, month))).padStart(2, '0')}-${String(Math.min(31, Math.max(1, day))).padStart(2, '0')}`
 }
 
-export async function fetchPubmed({ query, max }) {
+/**
+ * PubMed 的出版日期窗口。E-utilities 用 `mindate`/`maxdate` + `datetype=pdat`
+ * 表达，格式是 `YYYY/MM/DD`。以前 `fetchPubmed` 完全忽略 `lookbackDays`，
+ * 会把几年前的老论文也当成新论文推出来（缺陷 #4）。
+ */
+function pubmedDateRange(lookbackDays) {
+  const days = Number(lookbackDays)
+  if (!Number.isFinite(days) || days <= 0) return null
+  const fmt = (d) =>
+    `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`
+  const now = new Date()
+  // 上限卡今天：PubMed 里也有提前登记出版日期的记录
+  return { min: fmt(new Date(now.getTime() - days * 86400000)), max: fmt(now) }
+}
+
+export async function fetchPubmed({ query, max, lookbackDays = 30 }) {
   if (isEmptyQuery(query)) throw new Error('研究方向至少要填关键词 / 作者 / 期刊 / 单位之一')
   const term = pubmedTerm(query)
   const retmax = Math.min(50, Math.max(5, max * 3))
+  const range = pubmedDateRange(lookbackDays)
+  const dateParams =
+    range === null
+      ? ''
+      : `&datetype=pdat&mindate=${encodeURIComponent(range.min)}&maxdate=${encodeURIComponent(range.max)}`
   const searchUrl =
     'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&sort=date' +
-    `&retmax=${retmax}&term=${encodeURIComponent(term)}`
+    `&retmax=${retmax}&term=${encodeURIComponent(term)}${dateParams}`
   const search = JSON.parse(await getText(searchUrl))
   const ids = Array.isArray(search?.esearchresult?.idlist) ? search.esearchresult.idlist : []
   if (ids.length === 0) return []
@@ -671,10 +757,12 @@ export async function fetchArxiv({ query, max }) {
 
 /* --------------------------------- bioRxiv -------------------------------- */
 
-export async function fetchBiorxiv({ query, max }) {
+export async function fetchBiorxiv({ query, max, lookbackDays = 30 }) {
   // bioRxiv 官方 API 不提供关键词检索，先取最近窗口，再本地过滤。
+  // 窗口跟其它源一样走 lookbackDays（之前写死 30 天，增量扫描时白抓一堆旧论文）。
+  const days = Number.isFinite(Number(lookbackDays)) && Number(lookbackDays) > 0 ? Math.round(Number(lookbackDays)) : 30
   const now = new Date()
-  const start = new Date(now.getTime() - 1000 * 60 * 60 * 24 * 30)
+  const start = new Date(now.getTime() - 1000 * 60 * 60 * 24 * Math.min(days, 180))
   const fmt = (d) => d.toISOString().slice(0, 10)
   const url = `https://api.biorxiv.org/details/biorxiv/${fmt(start)}/${fmt(now)}/0/json`
   const text = await getText(url)
@@ -685,7 +773,6 @@ export async function fetchBiorxiv({ query, max }) {
     throw new Error('bioRxiv 返回了非 JSON 内容')
   }
   const collection = Array.isArray(payload.collection) ? payload.collection : []
-  const keywords = query.keywords.map((k) => k.toLowerCase())
   return collection.map((row) => {
     const doi = String(row.doi ?? '').trim()
     return {

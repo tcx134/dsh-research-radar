@@ -4,6 +4,12 @@ dist/
 
 # 本地调试产物
 tmp-*/
+tmp-*.mjs
+tmp-*.js
+*.bak
+*.bak-*
+.gui-index.html
+.combo.js
 smoke-client.mjs
 .DS_Store
 Thumbs.db
