@@ -68,11 +68,21 @@ function asStringList(value, max = 30) {
 
 const KNOWN_SOURCES = new Set(['openalex', 'crossref', 'pubmed', 'arxiv', 'biorxiv', 'rss'])
 
+/**
+ * 手改 state.json 时可能漏掉 id。用名称生成稳定的 id，
+ * 保证同一份文件每次加载得到同一个值，不会让 items 的 topicId 失联。
+ */
+function deriveTopicId(name) {
+  let hash = 5381
+  for (let i = 0; i < name.length; i += 1) hash = ((hash << 5) + hash + name.charCodeAt(i)) | 0
+  return `t-${(hash >>> 0).toString(36)}`
+}
+
 function normalizeTopic(raw) {
   if (raw === null || typeof raw !== 'object') return null
-  const id = asString(raw.id).trim()
   const name = asString(raw.name).trim()
-  if (id === '' || name === '') return null
+  if (name === '') return null
+  const id = asString(raw.id).trim() || deriveTopicId(name)
   const sources = Array.isArray(raw.sources)
     ? raw.sources.filter((s) => typeof s === 'string' && KNOWN_SOURCES.has(s))
     : ['openalex']

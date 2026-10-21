@@ -64,8 +64,20 @@ OpenAlex 无 API Key 时是**全网共享的 $0.10/天**配额，量大时请在
 plugin_manager install_bundle(target: "F:\\python\\dsh-research-radar")
 ```
 
-安装后 `dsh.profile.bundles` 会带上 `@local/dsh-research-radar`，Host 半边立即生效；
-**客户端（面板）半边需要刷新一次页面**才会出现在侧边栏。
+路径换成你实际存放本目录的绝对路径。安装后 `dsh.profile.bundles` 会带上 `@local/dsh-research-radar`，
+Host 半边立即生效；**客户端（面板）半边需要刷新一次页面**才会出现在侧边栏。
+
+### 换到另一台电脑
+
+代码本身不含任何硬编码路径，整个目录拷到任意位置都能用，只需两步：
+
+1. 把目录放到新机器上（之后不要再移动）。
+2. 用新路径重新 `install_bundle`（或先禁用再启用一次），profile 里登记的绝对路径会被更新。
+3. 想保留方向与邮箱配置的话，把旧机器的 `%USERPROFILE%\.dsh\research-radar\state.json`
+   拷到新机器同名位置即可；不想带就跳过，首次启动会自动建空配置。
+
+`state.json` 里 SMTP 密码是明文，传输时注意；它已被 `.gitignore` 排除，不会被提交。
+详细步骤与踩坑清单见 [HANDOFF.md](HANDOFF.md) 第十节。
 
 ## 使用
 
@@ -99,6 +111,15 @@ icon.svg            原创图标
 
 默认 `%USERPROFILE%\.dsh\research-radar\state.json`（可用插件 `Config.dataDir` 覆盖）。
 SMTP 密码只保存在该文件里，面板返回时始终脱敏为 `********`。
+
+## 打包带走
+
+```powershell
+Compress-Archive -Path 'F:\python\dsh-research-radar' `
+  -DestinationPath "$env:USERPROFILE\Desktop\research-radar.zip" -Force
+```
+
+`radar-config.example.json` 是配置文件的字段结构参考（全占位值，无真实凭据）。
 
 ## 许可
 

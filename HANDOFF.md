@@ -433,7 +433,7 @@ export const Config = Schema.object({
 - ❌ 不要把 OpenAlex 的 `filter` 整体 `encodeURIComponent`
 - ❌ 不要把 `--dsw-alias-brand-primary` 当强调色
 - ❌ 不要随意触发扫描（邮件推送开着，会给用户发信）
-- ❌ 不要移动 `F:\python\dsh-research-radar` 目录（profile 里是 `link:F:/python/dsh-research-radar`，移动即失效）
+- ❌ 不要直接移动/重命名 `F:\python\dsh-research-radar` 目录后就撒手 —— profile 里登记的是绝对路径 `link:F:/python/dsh-research-radar`，移动后必须重新 `install_bundle`（见第十节）
 
 ---
 
@@ -448,3 +448,136 @@ export const Config = Schema.object({
 | 有主要关键词时**只下发主要关键词**给数据库 | 否则 `MR` 会在服务端占满 `max` 配额，本地再过滤也来不及 |
 | 面板自己维护 zh/en 字典而非只用 `ctx.locale.bind()` | 需要按浏览器语言即时切换，且字典键多，自己查表更直接（同时也 `register` 给框架用） |
 | 数据存 `~/.dsh/research-radar/state.json` | Web 进程没有 `DSH_HOME` 环境变量，落到 Temp 会丢数据。用 `resolveDshHome()` 三级兜底 |
+| topic 的 `id` 缺失时**由名称派生**而非丢弃 | 换机/手改 `state.json` 容易漏 `id`，原来会静默丢方向。`deriveTopicId()` 用 djb2 哈希，同名稳定 |
+
+---
+
+## 十、换到另一台电脑
+
+好消息：**插件代码里没有任何硬编码路径或用户名**（`F:\`、`C:\`、`/python`、`jincheng` 全搜不到），整个目录可以直接搬到任意位置、任意盘符、任意用户名下。
+
+已实测验证（不是推测）：
+
+| 验证项 | 方法 | 结果 |
+| --- | --- | --- |
+| 换路径后代码仍可运行 | 把整个目录拷到 `F:\python\tmp-move-test\another dir\dsh-research-radar`（**带空格、带中文无关路径**），7 个 JS 文件 `node --check` | 全部 exit=0 |
+| 数据目录跟随新用户名 | 把 `USERPROFILE`/`HOME` 指向假的 `F:\python\tmp-move-test\fakeuser`，清掉 `DSH_HOME`，调 `resolveDshHome()` | 得到 `F:\...\fakeuser\.dsh`，自动建目录并写入 `state.json`（702 bytes） |
+| `DSH_HOME` 能覆盖 | 设 `DSH_HOME=F:\python\tmp-move-test\customhome` | `store.path` = `...\customhome\research-radar\state.json` |
+| 真实 `state.json` 拷过去能读 | 复制用户的 17 KB state 到假 home | `topics=[{id:'t-mvgpentg',name:'金属橡胶'}]`、`items=4`、`seen=12`、`mail.host=smtp.163.com`、密码 16 位**完整保留** |
+| 手改 state.json 漏 id 不会丢数据 | 写一条只有 `name` 没有 `id` 的方向 | 修复前：重启后整条被丢弃；修复后：由名称派生稳定 id `t-voqfnb`，两次独立加载结果一致 |
+
+> 最后一项是本次迁移测试**发现并修掉的真实 bug**：`normalizeTopic` 原来要求 `id` 和 `name` 都非空，否则返回 `null` 丢弃。新机器上用户手写或从别处拼 `state.json` 时很容易漏 `id`，一重启方向就没了。现在改成 `id` 缺失时用 `deriveTopicId(name)`（djb2 哈希）生成，同名稳定。
+
+需要重新处理的只有两处**外部登记**：DSH profile 里的绝对路径，以及数据目录。
+
+### 10.1 要带走什么
+
+| 内容 | 位置 | 必需 | 说明 |
+| --- | --- | --- | --- |
+| 插件目录 | `F:\python\dsh-research-radar\` | ✅ 必需 | 排除 `node_modules/`（本项目零依赖，本来就没有） |
+| git 历史 | 同上 `.git\` | 建议 | 不要的话删掉也能跑，但会丢掉 5 个提交记录 |
+| 用户配置 + 已抓论文 | `C:\Users\<user>\.dsh\research-radar\state.json` | 建议 | 里面是方向（金属橡胶）、扫描设置、SMTP 账号密码、已抓的 4 篇论文和去重表 |
+| 截图 | 插件目录 `docs\` | 可选 | 只是给 README 用的 |
+
+**打包命令**（在旧机器上，PowerShell）：
+
+```powershell
+# 连 git 历史一起打
+Compress-Archive -Path 'F:\python\dsh-research-radar' `
+  -DestinationPath "$env:USERPROFILE\Desktop\research-radar.zip" -Force
+
+# 配置单独打一份（别和代码混在一起，里面有邮箱授权码）
+Copy-Item "$env:USERPROFILE\.dsh\research-radar\state.json" `
+  "$env:USERPROFILE\Desktop\radar-state.json"
+```
+
+> ⚠️ `state.json` 里的 SMTP 密码是**明文**（`settings.mail.pass`）。别把它传到网盘、别提交进 git。它位于插件目录之外，正常情况下不会被 `git add` 到；但如果为了「一起打包」把它复制进插件目录，一定要先加进 `.gitignore`。走微信/邮件传的话，用完就删。
+
+### 10.2 新机器前置条件
+
+| 需要 | 是否必需 | 怎么确认 |
+| --- | --- | --- |
+| DeepSeek Harness 已安装并能打开 Web GUI | ✅ 必需 | 能打开 `http://127.0.0.1:<port>` |
+| 插件目录放好 | ✅ 必需 | 路径随意，**但之后不要再移动** |
+| `state.json` 放到 `%USERPROFILE%\.dsh\research-radar\` | 建议 | 目录不存在就新建 |
+| Node.js | 可选 | 只在想跑 `node --check` 语法检查时需要。DSH 自带一份：`%USERPROFILE%\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe` |
+| Git | 可选 | 只在想继续提交时需要。没有也不影响插件运行 |
+| 网络能访问 `api.openalex.org` / `api.crossref.org` | ✅ 必需 | 否则扫描会全空 |
+
+### 10.3 安装步骤
+
+**第 1 步：放代码**
+
+把 `research-radar` 文件夹解压到新机器任意位置，例如 `D:\work\dsh-research-radar`。
+
+**第 2 步：放配置**
+
+```powershell
+$dst = "$env:USERPROFILE\.dsh\research-radar"
+New-Item -ItemType Directory -Path $dst -Force | Out-Null
+Copy-Item "$env:USERPROFILE\Desktop\radar-state.json" "$dst\state.json"
+```
+
+如果没带 `state.json`，跳过这步 —— 插件首次启动会自动建一份空配置，之后在面板里重新填方向、邮箱即可。
+
+**第 3 步：装插件**
+
+在 DSH 里让 Agent 执行（**不要手改 profile 的 `package.json`**）：
+
+```
+plugin_manager install_bundle
+  target: D:\work\dsh-research-radar        ← 用新机器上的绝对路径
+```
+
+返回 `"application": "applied"` 且 `"warnings": []` 即成功。DSH 会自动在 profile 里写入
+`"@local/dsh-research-radar": "link:D:/work/dsh-research-radar"`（注意是正斜杠）。
+
+**第 4 步：刷新页面**
+
+侧边栏应出现「研究前沿雷达」。没出现就 `Ctrl+Shift+R` 硬刷新（Client 半边是浏览器 bundle，必须刷新才加载）。
+
+**第 5 步：验证**
+
+```powershell
+# 端点活着（需要 marker header，否则 403）
+Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/state" `
+  -Headers @{'x-dsh-research-radar'='1'} | ConvertTo-Json -Depth 4
+```
+
+看到 `topics`、`settings`、`status.storePath` 就说明 Host 半边正常。`storePath` 应该是
+`C:\Users\<新用户名>\.dsh\research-radar\state.json` —— **如果指向 `AppData\Local\Temp`，说明数据目录没放对**。
+
+然后面板里点「设置 → 发送测试邮件」，确认 SMTP 在新机器上也能发（163 的授权码通常不绑 IP，但公司网络可能封 465 端口）。
+
+### 10.4 五个容易踩的坑
+
+**① profile 里的路径是绝对的，搬家必失效**
+
+旧机器 profile 里是 `link:F:/python/dsh-research-radar`。把文件夹拷到 `D:\work\` 之后，这个 link 指向不存在的路径，DSH 启动会报模块找不到。
+
+- 如果新机器是**全新安装的 DSH**（profile 里没有这条记录）→ 走 10.3 第 3 步，自动写对新路径。
+- 如果新机器是**整个 profile 一起拷过来的** → 必须重新 `install_bundle`，或让 Agent 用 `plugin_manager` 先 `set_plugin` 禁用再启用，它会重写 link。
+
+**② 数据目录跟着用户名走**
+
+`radar/store.js` 的 `resolveDshHome()` 顺序是：`DSH_HOME` 环境变量 → `os.homedir()\.dsh` → `os.tmpdir()\dsh-home`。新机器用户名不同，路径自然就变了 —— 这是设计如此，不用改代码。只要把 `state.json` 放到**新机器的** `%USERPROFILE%\.dsh\research-radar\` 就行。
+
+注意 `os.homedir()` 在 Windows 上读的是 `USERPROFILE`，如果新机器上设置了 `HOME` 但没设 `USERPROFILE`（少见，一般是 Git Bash 环境），可能落到意料之外的目录。排查时先看 `/state` 返回的 `status.storePath` 到底指哪。
+
+**③ GUI 的 token URL 每个进程都不一样**
+
+`http://127.0.0.1:<port>/?token=xxxx` 里的 token 是 DSH 进程启动时随机生成的，重启就变，端口也可能变（见过 58120 / 57364 / 54648）。**不要硬编码**。要让 Agent 拿当前 URL，用 Host 的 `ctx.connection.authenticatedUrl(baseUrl)`。
+
+**④ OpenAlex 免费额度是按 IP 共享的**
+
+无 API Key 时是**全网共享 $0.10/天**（响应头 `x-ratelimit-remaining-usd`）。换机器换 IP 会拿到新额度，但白天高峰期照样 429。插件里已有 1.1 秒节流 + 429 指数退避重试，还不行就在「设置 → 检索接口」填自己的 OpenAlex Key（免费申请）。
+
+**⑤ 别把 `state.json` 提交进 git**
+
+它在插件目录之外，正常情况下不会被 `git add` 到。但如果有人为了「一起打包」把它复制进插件目录，记得加进 `.gitignore` —— 里面是明文邮箱授权码。
+
+### 10.5 只想把代码带到新机器、配置重新填
+
+最省事的路径：**只拷代码目录，不拷 `state.json`**。新机器装好后在面板里点「研究方向 → 添加方向」，填名称 + 关键词 + 勾选数据库，点「试检索」确认搜得准，再保存；然后「设置」里填 SMTP。全程 2 分钟，比处理明文密码的风险更划算。
+
+`radar-config.example.json` 是配置的字段结构参考（占位值，无真实凭据），不确定某个字段怎么填时看它。

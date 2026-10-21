@@ -1,0 +1,46 @@
+{
+  "_comment": "配置模板 —— 换机器时不需要手填这个文件。真正的配置在 %USERPROFILE%\\.dsh\\research-radar\\state.json，直接拷那个文件即可（见 HANDOFF.md 第十节）。此文件仅用于从零重建时参考字段结构。",
+  "topics": [
+    {
+      "id": "t-example",
+      "name": "方向名称",
+      "keywords": ["多词短语优先", "MR"],
+      "authors": [],
+      "venues": [],
+      "institutions": [],
+      "exclude": ["review"],
+      "matchMode": "any",
+      "strict": true,
+      "sources": ["openalex", "crossref"],
+      "enabled": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "settings": {
+    "scan": {
+      "enabled": true,
+      "intervalHours": 12,
+      "maxPerTopic": 6,
+      "summarize": true,
+      "lookbackDays": 30,
+      "lastScanAt": null,
+      "lastScanNew": 0
+    },
+    "api": {
+      "mailto": "you@example.com",
+      "openalexKey": ""
+    },
+    "mail": {
+      "enabled": false,
+      "host": "smtp.163.com",
+      "port": 465,
+      "secure": true,
+      "user": "you@163.com",
+      "pass": "授权码，不是登录密码",
+      "from": "you@163.com",
+      "to": "you@qq.com",
+      "lastSentAt": null
+    },
+    "rss": []
+  }
+}

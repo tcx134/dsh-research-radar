@@ -7,3 +7,8 @@ tmp-*/
 smoke-client.mjs
 .DS_Store
 Thumbs.db
+
+# 运行时数据（含 SMTP 明文密码），位于 ~/.dsh/research-radar/
+# 正常情况在仓库外，此处是防止有人为了打包而复制进目录
+state.json
+radar-state.json
