@@ -1,9 +1,13 @@
 import { createStore } from './radar/store.js'
-import { runScan, buildDigest } from './radar/scan.js'
-import { sendMail, textToHtml } from './radar/mail.js'
+import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays } from './radar/scan.js'
+import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource } from './radar/sources.js'
+import { Config, validateConfig } from './radar/config.js'
+import { computeStats } from './radar/stats.js'
 
 export const name = 'dsh-research-radar'
+
+export { Config }
 
 export const inject = ['webServer', 'llm', 'tools', 'timer', 'agentDefaultModel']
 
@@ -80,19 +84,99 @@ function toStringList(value, max = 30) {
 
 const KNOWN_SOURCES = new Set(Object.keys(SOURCE_LABELS))
 
+/** 语言过滤支持的值（空数组 = 不限语言）。 */
+const KNOWN_LANGUAGES = new Set(['zh', 'en'])
+
+/**
+ * 整理方向里的语言白名单。
+ * 中英文都选 = 不限语言（折成空数组），这样不会比不选更严格。
+ */
+function toLanguageList(value) {
+  const list = Array.isArray(value) ? value : []
+  const unique = [...new Set(list.map((v) => String(v).trim().toLowerCase()).filter((v) => KNOWN_LANGUAGES.has(v)))]
+  return unique.length >= KNOWN_LANGUAGES.size ? [] : unique
+}
+
+/** `/state` 默认返回多少条论文（缺陷 #6：以前硬截 200 条，更早的再也看不到）。 */
+const DEFAULT_ITEM_LIMIT = 50
+const MAX_ITEM_LIMIT = 500
+
+/** 条目筛选条件。 */
+const ITEM_FILTERS = new Set(['all', 'unread', 'starred'])
+
+function clampInt(value, fallback, min, max) {
+  // 注意 Number(null) === 0：查询参数缺失时必须走 fallback，否则 limit 会被
+  // 夹成 1（踩过一次：/state 不带参数只返回一条论文）。
+  if (value === null || value === undefined || value === '') return fallback
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, Math.trunc(n)))
+}
+
+/**
+ * 按筛选条件从全部条目里切出一页。
+ *
+ * 分页与筛选放在服务端做（而不是像以前那样 `slice(0, 200)` 后让前端全量
+ * 过滤），这样论文攒到几千条时面板也不会卡。
+ * @param {object[]} all 全部条目（按 discoveredAt 倒序）
+ * @param {{ limit?: string|number, offset?: string|number, topicId?: string, filter?: string }} query
+ * @returns {{ items: object[], total: number, offset: number, limit: number, hasMore: boolean }}
+ */
+export function paginateItems(all, query = {}) {
+  const source = Array.isArray(all) ? all : []
+  const topicId = String(query.topicId ?? '')
+  const filter = ITEM_FILTERS.has(String(query.filter ?? '')) ? String(query.filter) : 'all'
+  const filtered = source.filter((item) => {
+    if (item === null || typeof item !== 'object') return false
+    if (topicId !== '' && item.topicId !== topicId) return false
+    if (filter === 'unread') return item.read !== true
+    if (filter === 'starred') return item.starred === true
+    return true
+  })
+  const limit = clampInt(query.limit, DEFAULT_ITEM_LIMIT, 1, MAX_ITEM_LIMIT)
+  const offset = clampInt(query.offset, 0, 0, Number.MAX_SAFE_INTEGER)
+  const page = filtered.slice(offset, offset + limit)
+  return {
+    items: page,
+    total: filtered.length,
+    offset,
+    limit,
+    hasMore: offset + page.length < filtered.length,
+  }
+}
+
 /* --------------------------------- 主逻辑 -------------------------------- */
 
 export function apply(ctx, config) {
-  const pluginConfig = config !== null && typeof config === 'object' ? config : {}
+  // loader 会先按 Config 校验，但直接 apply（测试 / 老版本 loader）时不会，
+  // 这里再兜一次默认值，保证 dataDir / locale 之类总有确定的值。
+  const validated = validateConfig(config)
+  const pluginConfig =
+    'value' in validated && validated.value !== undefined
+      ? validated.value
+      : config !== null && typeof config === 'object'
+        ? config
+        : {}
   const store = createStore(ctx, pluginConfig)
   let scanRunning = false
   let lastError = ''
 
-  async function publicState() {
+  /**
+   * 组装面板要的状态。`query` 支持 limit / offset / topicId / filter，
+   * 不传时按默认第一页返回。
+   */
+  async function publicState(query = {}) {
     const state = await store.load()
+    const page = paginateItems(state.items, query)
     return {
       topics: state.topics,
-      items: state.items.slice(0, 200),
+      items: page.items,
+      page: { total: page.total, offset: page.offset, limit: page.limit, hasMore: page.hasMore },
+      counts: {
+        all: state.items.length,
+        unread: state.items.filter((i) => i.read !== true).length,
+        starred: state.items.filter((i) => i.starred === true).length,
+      },
       settings: { ...state.settings, mail: maskMailSettings(state.settings.mail) },
       sources: SOURCE_LABELS,
       status: {
@@ -100,6 +184,12 @@ export function apply(ctx, config) {
         lastError,
         storePath: store.path,
         scanIntervalHours: state.settings.scan.intervalHours,
+        // 下次扫描实际会用多大的窗口（增量窗口，见 radar/scan.js 的
+        // effectiveLookbackDays）。面板把它显示出来，方便确认优化生效。
+        effectiveLookbackDays: effectiveLookbackDays(
+          state.settings.scan.lastScanAt,
+          state.settings.scan.lookbackDays,
+        ),
       },
     }
   }
@@ -168,7 +258,30 @@ export function apply(ctx, config) {
           const method = req.method ?? 'GET'
 
           if (method === 'GET' && action === 'state') {
-            sendJson(res, 200, await publicState())
+            sendJson(
+              res,
+              200,
+              await publicState({
+                limit: url.searchParams.get('limit'),
+                offset: url.searchParams.get('offset'),
+                topicId: url.searchParams.get('topicId') ?? '',
+                filter: url.searchParams.get('filter') ?? '',
+              }),
+            )
+            return
+          }
+
+          if (method === 'GET' && action === 'stats') {
+            const state = await store.load()
+            sendJson(
+              res,
+              200,
+              computeStats(state.items, {
+                days: url.searchParams.get('days'),
+                topicId: url.searchParams.get('topicId') ?? '',
+                sourceLabels: SOURCE_LABELS,
+              }),
+            )
             return
           }
 
@@ -213,6 +326,7 @@ export function apply(ctx, config) {
                   ? payload.sources.filter((s) => typeof s === 'string' && KNOWN_SOURCES.has(s))
                   : ['openalex']
                 const finalSources = sources.length > 0 ? sources : ['openalex']
+                const languages = toLanguageList(payload.languages)
                 const matchMode = payload.matchMode === 'all' ? 'all' : 'any'
                 const strict = payload.strict !== false
                 const existing = state.topics.find((t) => t.id === id)
@@ -228,6 +342,7 @@ export function apply(ctx, config) {
                     matchMode,
                     strict,
                     sources: finalSources,
+                    languages,
                     enabled: payload.enabled !== false,
                     createdAt: new Date().toISOString(),
                   })
@@ -241,6 +356,7 @@ export function apply(ctx, config) {
                   existing.matchMode = matchMode
                   existing.strict = strict
                   existing.sources = finalSources
+                  existing.languages = languages
                   existing.enabled = payload.enabled !== false
                 }
                 return state.topics
@@ -350,12 +466,32 @@ export function apply(ctx, config) {
 
           if (action === 'item') {
             const id = String(body.id ?? '')
-            await store.mutate((state) => {
+            if (typeof body.read !== 'boolean' && typeof body.starred !== 'boolean') {
+              throw new Error('需要提供 read 或 starred 布尔值')
+            }
+            const updated = await store.mutate((state) => {
               const item = state.items.find((i) => i.id === id)
               if (item === undefined) throw new Error('未找到该论文')
               if (typeof body.read === 'boolean') item.read = body.read
+              if (typeof body.starred === 'boolean') item.starred = body.starred
+              return { read: item.read === true, starred: item.starred === true }
             })
-            sendJson(res, 200, { ok: true })
+            sendJson(res, 200, { ok: true, item: { id, ...updated } })
+            return
+          }
+
+          if (action === 'mark-all-read') {
+            const changed = await store.mutate((state) => {
+              let count = 0
+              for (const item of state.items) {
+                if (item.read !== true) {
+                  item.read = true
+                  count += 1
+                }
+              }
+              return count
+            })
+            sendJson(res, 200, { ok: true, marked: changed, state: await publicState() })
             return
           }
 
@@ -390,8 +526,13 @@ export function apply(ctx, config) {
 
           if (action === 'preview-mail') {
             const state = await store.load()
-            const text = buildDigest(state.items.slice(0, 5), state.topics)
-            sendJson(res, 200, { ok: true, text })
+            const picked = state.items.slice(0, 5)
+            const text = buildDigest(picked, state.topics)
+            sendJson(res, 200, {
+              ok: true,
+              text,
+              html: digestToHtml(picked, state.topics, { panelUrl: resolvePanelUrl(ctx) }),
+            })
             return
           }
 
@@ -433,6 +574,12 @@ export function apply(ctx, config) {
             items: { type: 'string', enum: ['openalex', 'crossref', 'pubmed', 'arxiv', 'biorxiv', 'rss'] },
             description: 'add_topic 时使用的订阅源；材料/工程/物理等学科建议 openalex',
           },
+          languages: {
+            type: 'array',
+            items: { type: 'string', enum: ['zh', 'en'] },
+            description:
+              'add_topic 时的语言过滤：zh（中文文献）/ en（英文文献）。留空或两项都传 = 不限语言',
+          },
           topicId: { type: 'string', description: 'remove_topic 时的方向 id 或名称' },
         },
         required: ['action'],
@@ -457,6 +604,7 @@ export function apply(ctx, config) {
               venues: t.venues,
               institutions: t.institutions,
               sources: t.sources,
+              languages: t.languages ?? [],
             })),
             latest: state.items.slice(0, 5).map((i) => ({
               title: i.title,
@@ -491,6 +639,7 @@ export function apply(ctx, config) {
               ? args.sources.filter((s) => KNOWN_SOURCES.has(s))
               : ['openalex']
           const finalSources = sources.length > 0 ? sources : ['openalex']
+          const languages = toLanguageList(args?.languages)
           const topics = await store.mutate((state) => {
             const existing = state.topics.find((t) => t.name === name)
             if (existing !== undefined) {
@@ -500,6 +649,7 @@ export function apply(ctx, config) {
               existing.institutions = institutions
               existing.exclude = exclude
               existing.sources = finalSources
+              existing.languages = languages
               existing.enabled = true
               return state.topics
             }
@@ -512,6 +662,7 @@ export function apply(ctx, config) {
               institutions,
               exclude,
               sources: finalSources,
+              languages,
               enabled: true,
               createdAt: new Date().toISOString(),
             })
@@ -547,12 +698,13 @@ export function apply(ctx, config) {
           const recipients = String(state.settings.mail.to ?? '')
             .split(/[,;\s]+/)
             .filter(Boolean)
-          const text = buildDigest(state.items.slice(0, 10), state.topics)
+          const picked = state.items.slice(0, 10)
+          const text = buildDigest(picked, state.topics)
           const info = await sendMail(state.settings.mail, {
             to: recipients,
             subject: '[研究前沿雷达] 摘要汇总',
             text,
-            html: textToHtml(text),
+            html: digestToHtml(picked, state.topics, { panelUrl: resolvePanelUrl(ctx) }),
           })
           return { ok: true, recipients: info.recipients }
         }

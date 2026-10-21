@@ -7,6 +7,8 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-research-radar'
     const PANEL_ID = 'research-radar'
     const API = '/api/dsh-research-radar'
+    /** 面板每页拉多少条论文（服务端分页，缺陷 #6）。 */
+    const PAGE_SIZE = 50
 
     const DICT = {
       zh: {
@@ -34,6 +36,11 @@ window.__ModuleLoader__.load({
         exclude_ph: 'bearing\n命中这些词的论文会被丢弃',
         topic_sources: '检索哪些数据库',
         sources_hint: '不同维度之间是「且」：关键词命中 + 作者命中 + 期刊命中 才会推送。建议主库选 OpenAlex。',
+        topic_languages: '文献语言',
+        lang_zh: '中文文献',
+        lang_en: '英文文献',
+        languages_hint:
+          '不选或两项都选 = 不限语言。OpenAlex / PubMed 在源站按语言过滤；其它库按标题摘要里的汉字占比本地判断，认不出语言的照常推送。',
         match_mode: '多个关键词之间',
         match_any: '命中任意一个即可（推荐）',
         match_all: '必须全部命中（更严格，结果更少）',
@@ -75,6 +82,8 @@ window.__ModuleLoader__.load({
         new_items: '篇新论文',
         no_new: '没有发现新论文',
         last_scan: '上次扫描',
+        scan_window: '本次窗口',
+        days_unit: '天',
         last_mail: '上次发送邮件',
         never: '从未',
         tldr: '一句话',
@@ -97,6 +106,45 @@ window.__ModuleLoader__.load({
         open_access: '开放获取',
         no_abstract: '该库未提供摘要',
         stats: '共 {n} 篇',
+        filter_label: '筛选',
+        filter_items: '全部',
+        filter_unread: '未读',
+        filter_starred: '收藏',
+        mark_read: '标为已读',
+        mark_unread: '标为未读',
+        star: '收藏',
+        unstar: '取消收藏',
+        deep_read: '精读',
+        deep_read_title: '在新会话里让 Agent 精读这篇论文',
+        deep_read_failed: '无法发起精读',
+        deep_read_no_workspace: '还没有可用的工作区，请先建一个会话',
+        mark_all_read: '全部标为已读',
+        load_more: '加载更多',
+        no_more: '没有更多了',
+        empty_unread: '没有未读论文。',
+        empty_starred: '还没有收藏的论文。',
+        empty_filtered: '这个方向下还没有论文。',
+        read_marked: '已标为已读',
+        unread_marked: '已标为未读',
+        starred_marked: '已收藏',
+        unstarred_marked: '已取消收藏',
+        tab_stats: '趋势',
+        stats_days: '统计窗口',
+        stats_total: '论文总数',
+        stats_read: '已读',
+        stats_starred: '已收藏',
+        stats_summarized: '已摘要',
+        stats_weekly: '每周新增',
+        stats_week_unit: '周',
+        stats_by_source: '来源分布',
+        stats_by_venue: '高频期刊',
+        stats_by_author: '高频作者',
+        stats_by_topic: '方向分布',
+        stats_by_tag: '热门标签',
+        stats_empty: '这个窗口内还没有数据。先抓取一批论文，或把统计窗口调大。',
+        stats_none: '暂无数据',
+        stats_load_failed: '趋势数据加载失败',
+        days_unit_short: '天',
       },
       en: {
         title: 'Research Radar',
@@ -123,6 +171,11 @@ window.__ModuleLoader__.load({
         exclude_ph: 'bearing\nPapers matching these are dropped',
         topic_sources: 'Databases',
         sources_hint: 'Dimensions are AND-ed: a paper must match keywords + authors + venues to be pushed. OpenAlex is the best default.',
+        topic_languages: 'Languages',
+        lang_zh: 'Chinese',
+        lang_en: 'English',
+        languages_hint:
+          'Nothing selected (or both) = no language filter. OpenAlex / PubMed filter on the server; other sources are judged locally by the CJK ratio of title + abstract, and papers whose language cannot be detected are kept.',
         match_mode: 'Between multiple keywords',
         match_any: 'Match any keyword (recommended)',
         match_all: 'Match all keywords (stricter, fewer results)',
@@ -164,6 +217,8 @@ window.__ModuleLoader__.load({
         new_items: 'new papers',
         no_new: 'No new papers',
         last_scan: 'Last scan',
+        scan_window: 'Window',
+        days_unit: 'd',
         last_mail: 'Last email',
         never: 'never',
         tldr: 'TL;DR',
@@ -186,6 +241,45 @@ window.__ModuleLoader__.load({
         open_access: 'Open access',
         no_abstract: 'No abstract provided by this database',
         stats: '{n} papers',
+        filter_label: 'Filter',
+        filter_items: 'All',
+        filter_unread: 'Unread',
+        filter_starred: 'Starred',
+        mark_read: 'Mark as read',
+        mark_unread: 'Mark as unread',
+        star: 'Star',
+        unstar: 'Unstar',
+        deep_read: 'Deep read',
+        deep_read_title: 'Ask the Agent to deep-read this paper in a new session',
+        deep_read_failed: 'Could not start deep read',
+        deep_read_no_workspace: 'No workspace available — create a session first',
+        mark_all_read: 'Mark all as read',
+        load_more: 'Load more',
+        no_more: 'No more papers',
+        empty_unread: 'No unread papers.',
+        empty_starred: 'No starred papers yet.',
+        empty_filtered: 'No papers under this topic yet.',
+        read_marked: 'Marked as read',
+        unread_marked: 'Marked as unread',
+        starred_marked: 'Starred',
+        unstarred_marked: 'Unstarred',
+        tab_stats: 'Trends',
+        stats_days: 'Window',
+        stats_total: 'Papers',
+        stats_read: 'Read',
+        stats_starred: 'Starred',
+        stats_summarized: 'Summarized',
+        stats_weekly: 'New per week',
+        stats_week_unit: 'wk',
+        stats_by_source: 'Sources',
+        stats_by_venue: 'Top venues',
+        stats_by_author: 'Top authors',
+        stats_by_topic: 'Topics',
+        stats_by_tag: 'Top tags',
+        stats_empty: 'No data in this window yet. Run a scan, or widen the window.',
+        stats_none: 'No data',
+        stats_load_failed: 'Failed to load trends',
+        days_unit_short: 'd',
       },
     }
 
@@ -202,6 +296,7 @@ window.__ModuleLoader__.load({
 .drr-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#43454a)}
 .drr-btn-danger{color:var(--dsw-alias-state-error-primary,#e5534b)}
 .drr-btn-sm{padding:3px 9px;font-size:11px}
+.drr-btn-deep{color:var(--dsw-alias-link,#4176e6);border-color:var(--dsw-alias-link,#4176e6)}
 .drr-tabs{display:flex;align-items:center;gap:4px;padding:8px 16px;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.28))}
 .drr-tab{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-secondary,#9a9a9a);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit}
 .drr-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}
@@ -264,6 +359,35 @@ window.__ModuleLoader__.load({
 .drr-preview-item a{color:inherit;text-decoration:none;font-weight:500}
 .drr-preview-item a:hover{color:var(--dsw-alias-link,#4176e6);text-decoration:underline}
 .drr-preview-meta{color:var(--dsw-alias-label-secondary,#9a9a9a);font-size:10.5px;margin-top:2px}
+.drr-card-read{opacity:.62;border-left-color:var(--dsw-alias-border-l4,rgba(128,128,128,.4))}
+.drr-card-read:hover{opacity:1}
+.drr-dot{color:var(--dsw-alias-link,#4176e6);font-size:9px;line-height:1;letter-spacing:0}
+.drr-chip-star{background:var(--dsw-alias-state-warn-tertiary,#fef5e7);color:var(--dsw-alias-state-warn-primary,#a86a00);font-weight:600}
+.drr-btn-star-on{color:var(--dsw-alias-state-warn-primary,#a86a00);border-color:var(--dsw-alias-state-warn-tertiary,#fef5e7)}
+.drr-filters{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.drr-seg{display:inline-flex;border:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.28));border-radius:6px;overflow:hidden}
+.drr-seg button{appearance:none;border:none;background:transparent;color:var(--dsw-alias-label-secondary,#9a9a9a);padding:4px 11px;font-size:11.5px;font-family:inherit;cursor:pointer;line-height:1.6}
+.drr-seg button + button{border-left:1px solid var(--dsw-alias-border-l4,rgba(128,128,128,.28))}
+.drr-seg button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12))}
+.drr-seg button.drr-seg-on{background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.18));color:var(--dsw-alias-label-primary,#e6e6e6);font-weight:600}
+.drr-seg-count{opacity:.7;margin-left:4px;font-weight:400}
+.drr-more{display:flex;justify-content:center;padding:8px 0 4px}
+.drr-stats-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:20px}
+.drr-stat{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.28));border-radius:8px;padding:10px 12px;background:var(--dsw-alias-bg-layer-1,#242424)}
+.drr-stat-num{font-size:20px;font-weight:600;line-height:1.2;color:var(--dsw-alias-link,#4176e6);font-variant-numeric:tabular-nums}
+.drr-stat-label{font-size:10.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);margin-top:3px;letter-spacing:.3px}
+.drr-chart{display:flex;align-items:flex-end;gap:3px;height:108px;padding-top:8px;border-bottom:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.28))}
+.drr-bar{flex:1;min-width:3px;height:100%;display:flex;align-items:flex-end}
+.drr-bar-fill{width:100%;background:var(--dsw-alias-link,#4176e6);border-radius:2px 2px 0 0;opacity:.8;min-height:2px}
+.drr-bar:hover .drr-bar-fill{opacity:1}
+.drr-chart-axis{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);margin:5px 0 22px}
+.drr-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px 24px}
+.drr-list-title{font-size:10.5px;font-weight:600;color:var(--dsw-alias-label-tertiary,#81858c);letter-spacing:.4px;text-transform:uppercase;margin-bottom:7px}
+.drr-list-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;line-height:1.5}
+.drr-list-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drr-list-count{color:var(--dsw-alias-label-secondary,#9a9a9a);font-size:11px;font-variant-numeric:tabular-nums}
+.drr-list-track{flex:0 0 54px;height:4px;border-radius:2px;background:var(--dsw-alias-markdown-tag,#f1f3f5);overflow:hidden}
+.drr-list-bar{height:100%;background:var(--dsw-alias-link,#4176e6);border-radius:2px}
 `
 
     function api(action, body) {
@@ -296,28 +420,104 @@ window.__ModuleLoader__.load({
       return date.toLocaleString()
     }
 
+    /**
+     * 拼「让 Agent 精读这篇」的提示词。
+     * 只带论文身份信息（标题 / 作者 / 期刊 / DOI / 链接）+ 摘要前 2000 字，
+     * 让 Agent 自己去取全文；明确禁止编造，取不到全文就基于摘要回答。
+     */
+    function buildDeepReadPrompt(item, locale) {
+      const zh = locale !== 'en'
+      const authors = Array.isArray(item.authors) && item.authors.length > 0 ? item.authors.join(', ') : ''
+      const abstract = typeof item.abstract === 'string' ? item.abstract.slice(0, 2000) : ''
+      const lines = []
+      if (zh) {
+        lines.push(`请精读这篇论文，帮我判断它对我的研究方向（${item.topicName || '我的方向'}）有什么用。`)
+        lines.push('')
+        lines.push(`标题：${item.title || '（未知）'}`)
+        if (authors) lines.push(`作者：${authors}`)
+        if (item.venue) lines.push(`期刊/会议：${item.venue}`)
+        if (item.publishedAt) lines.push(`发表时间：${String(item.publishedAt).slice(0, 10)}`)
+        if (item.doi) lines.push(`DOI：${item.doi}`)
+        if (item.url) lines.push(`链接：${item.url}`)
+        if (abstract) {
+          lines.push('')
+          lines.push(`摘要：${abstract}`)
+        }
+        lines.push('')
+        lines.push('要求：')
+        lines.push('1. 先尝试用可用的抓取工具拿到全文（开放获取 / 预印本 / 机构库）；拿不到就只基于上面的摘要，并明确说明「只读到摘要」。')
+        lines.push('2. 按这几块讲：要解决的问题、方法（含关键公式或建模思路）、关键结论与数据、创新点、局限与适用边界。')
+        lines.push('3. 最后单独一段说：哪些做法我能直接搬到自己工作上，还缺什么条件。')
+        lines.push('4. 不要编造论文里没有的数字、实验或结论；不确定就写「原文未提及」。')
+      } else {
+        lines.push(`Please deep-read this paper and tell me what it is worth for my research topic (${item.topicName || 'my topic'}).`)
+        lines.push('')
+        lines.push(`Title: ${item.title || '(unknown)'}`)
+        if (authors) lines.push(`Authors: ${authors}`)
+        if (item.venue) lines.push(`Venue: ${item.venue}`)
+        if (item.publishedAt) lines.push(`Published: ${String(item.publishedAt).slice(0, 10)}`)
+        if (item.doi) lines.push(`DOI: ${item.doi}`)
+        if (item.url) lines.push(`URL: ${item.url}`)
+        if (abstract) {
+          lines.push('')
+          lines.push(`Abstract: ${abstract}`)
+        }
+        lines.push('')
+        lines.push('Requirements:')
+        lines.push('1. Try to fetch the full text with the available tools (open access / preprint / repository). If that fails, work from the abstract above and say so explicitly.')
+        lines.push('2. Cover: problem, method (key equations or modelling ideas), key findings and numbers, novelty, limitations and applicability.')
+        lines.push('3. End with one paragraph: what I can reuse directly, and what is still missing.')
+        lines.push('4. Do not invent numbers, experiments or conclusions that are not in the paper; write "not reported" when unsure.')
+      }
+      return lines.join('\n')
+    }
+
+    /**
+     * 把一段提示词丢进「新会话」的输入框（不自动发送，用户自己按回车）。
+     * Client 服务只能从 ctx 取，而 Panel 是纯组件，所以用模块级变量接住 apply 时的 ctx。
+     */
+    let clientContext = null
+
+    function startAgentSession(prompt) {
+      const ctx = clientContext
+      if (ctx === null) throw new Error('Client 上下文不可用')
+      // 服务既可能挂在 ctx 属性上（ctx.uiWorkspace），也可能只走 ctx.get()，两种都试
+      const workspace =
+        typeof ctx.get === 'function' ? ctx.get('uiWorkspace') : undefined
+      const target = workspace === undefined ? ctx.uiWorkspace : workspace
+      if (target === undefined || typeof target.startSession !== 'function') {
+        throw new Error('工作区服务不可用')
+      }
+      // 不传工作区 = 用当前/最近工作区；clearPreviousDraft:false 表示不清掉用户已输入的草稿
+      target.startSession(undefined, { prompt, clearPreviousDraft: false })
+    }
+
     function Field({ t, labelKey, value }) {
       if (typeof value !== 'string' || value === '' || value === '摘要未提及') return null
       return h('div', { className: 'drr-field' }, h('b', null, t(labelKey)), value)
     }
 
-    function ItemCard({ item, t }) {
+    function ItemCard({ item, t, onToggleRead, onToggleStar, onDeepRead }) {
       const s = item.summary !== null && typeof item.summary === 'object' ? item.summary : null
       const hasStructured =
         s !== null &&
         ['tldr', 'problem', 'method', 'findings', 'innovation', 'limitations', 'relevance'].some(
           (k) => typeof s[k] === 'string' && s[k] !== '' && s[k] !== '摘要未提及',
         )
+      const isRead = item.read === true
+      const isStarred = item.starred === true
 
       const topRow = h(
         'div',
         { className: 'drr-card-top' },
+        isRead ? null : h('span', { className: 'drr-dot', title: t('filter_unread') }, '●'),
         item.topicName ? h('span', { className: 'drr-chip drr-chip-topic' }, item.topicName) : null,
         item.venue ? h('span', { className: 'drr-chip' }, item.venue) : null,
         item.publishedAt ? h('span', { className: 'drr-chip' }, fmtDate(item.publishedAt)) : null,
         item.source ? h('span', { className: 'drr-chip' }, item.source) : null,
         item.openAccess === true ? h('span', { className: 'drr-chip drr-chip-oa' }, t('open_access')) : null,
         item.matchedIn ? h('span', { className: 'drr-chip drr-chip-match' }, `${t('matched')} · ${item.matchedIn}`) : null,
+        isStarred ? h('span', { className: 'drr-chip drr-chip-star' }, '★') : null,
       )
 
       const body = hasStructured
@@ -370,11 +570,40 @@ window.__ModuleLoader__.load({
           : null,
         h('span', { className: 'drr-spacer' }),
         item.discoveredAt ? h('span', null, fmtTime(item.discoveredAt)) : null,
+        typeof onDeepRead === 'function'
+          ? h(
+              'button',
+              {
+                className: 'drr-btn drr-btn-sm drr-btn-deep',
+                onClick: () => onDeepRead(item),
+                title: t('deep_read_title'),
+              },
+              `🔍 ${t('deep_read')}`,
+            )
+          : null,
+        typeof onToggleStar === 'function'
+          ? h(
+              'button',
+              {
+                className: `drr-btn drr-btn-sm ${isStarred ? 'drr-btn-star-on' : ''}`,
+                onClick: () => onToggleStar(item, !isStarred),
+                title: isStarred ? t('unstar') : t('star'),
+              },
+              isStarred ? `★ ${t('unstar')}` : `☆ ${t('star')}`,
+            )
+          : null,
+        typeof onToggleRead === 'function'
+          ? h(
+              'button',
+              { className: 'drr-btn drr-btn-sm', onClick: () => onToggleRead(item, !isRead) },
+              isRead ? t('mark_unread') : t('mark_read'),
+            )
+          : null,
       )
 
       return h(
         'div',
-        { className: 'drr-card' },
+        { className: `drr-card ${isRead ? 'drr-card-read' : ''}` },
         topRow,
         h(
           'div',
@@ -405,12 +634,21 @@ window.__ModuleLoader__.load({
       const [sources, setSources] = React.useState(
         initial && Array.isArray(initial.sources) && initial.sources.length > 0 ? initial.sources : ['openalex'],
       )
+      const [languages, setLanguages] = React.useState(
+        initial && Array.isArray(initial.languages) ? initial.languages : [],
+      )
       const [preview, setPreview] = React.useState(null)
       const [previewing, setPreviewing] = React.useState(false)
 
       const toggle = (source) => {
         setSources((current) =>
           current.includes(source) ? current.filter((s) => s !== source) : current.concat(source),
+        )
+      }
+
+      const toggleLanguage = (code) => {
+        setLanguages((current) =>
+          current.includes(code) ? current.filter((c) => c !== code) : current.concat(code),
         )
       }
 
@@ -424,6 +662,8 @@ window.__ModuleLoader__.load({
         matchMode,
         strict,
         sources,
+        // 空数组或两项都选 = 不限语言（后端也会把两项折成空数组）
+        languages: languages.length >= 2 ? [] : languages,
       })
 
       const runPreview = () => {
@@ -555,6 +795,24 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('div', { className: 'drr-hint' }, t('sources_hint')),
+        h('label', { className: 'drr-label' }, t('topic_languages')),
+        h(
+          'div',
+          { className: 'drr-src' },
+          ['zh', 'en'].map((code) =>
+            h(
+              'label',
+              { key: code },
+              h('input', {
+                type: 'checkbox',
+                checked: languages.includes(code),
+                onChange: () => toggleLanguage(code),
+              }),
+              t(code === 'zh' ? 'lang_zh' : 'lang_en'),
+            ),
+          ),
+        ),
+        h('div', { className: 'drr-hint' }, t('languages_hint')),
         h('label', { className: 'drr-label' }, t('match_mode')),
         h(
           'div',
@@ -604,6 +862,33 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 趋势榜单的一行：名字 + 相对长度的条 + 次数。 */
+    function RankList({ title, rows, t }) {
+      const list = Array.isArray(rows) ? rows : []
+      return h(
+        'div',
+        null,
+        h('div', { className: 'drr-list-title' }, title),
+        list.length === 0
+          ? h('div', { className: 'drr-hint' }, t('stats_none'))
+          : list.map((row) => {
+              const max = list.reduce((m, r) => Math.max(m, Number(r.count) || 0), 0) || 1
+              const width = Math.max(4, Math.round(((Number(row.count) || 0) / max) * 100))
+              return h(
+                'div',
+                { key: row.key, className: 'drr-list-row' },
+                h('span', { className: 'drr-list-name', title: row.key }, row.label || row.key),
+                h(
+                  'span',
+                  { className: 'drr-list-track' },
+                  h('span', { className: 'drr-list-bar', style: { width: `${width}%` } }),
+                ),
+                h('span', { className: 'drr-list-count' }, String(row.count)),
+              )
+            }),
+      )
+    }
+
     function Panel() {
       const [locale] = React.useState(() => {
         try {
@@ -626,35 +911,124 @@ window.__ModuleLoader__.load({
       const [apiDraft, setApiDraft] = React.useState(null)
       const [rssDraft, setRssDraft] = React.useState('')
       const [topicFilter, setTopicFilter] = React.useState('')
+      const [itemFilter, setItemFilter] = React.useState('all')
+      const [items, setItems] = React.useState([])
+      const [page, setPage] = React.useState({ total: 0, offset: 0, limit: PAGE_SIZE, hasMore: false })
+      const [counts, setCounts] = React.useState({ all: 0, unread: 0, starred: 0 })
+      const [stats, setStats] = React.useState(null)
+      const [statsDays, setStatsDays] = React.useState(90)
+      const [statsError, setStatsError] = React.useState('')
 
+      /** 把状态载荷里的设置草稿同步进表单（不影响已加载的条目列表）。 */
+      const absorbSettings = (next) => {
+        if (!next || !next.settings) return
+        setMailDraft({ ...next.settings.mail })
+        setScanDraft({ ...next.settings.scan })
+        setApiDraft({ ...(next.settings.api || {}) })
+        setRssDraft((next.settings.rss || []).join('\n'))
+      }
+
+      /** 第一页（或扫描/保存后）整体替换条目列表。 */
       const applyState = (next) => {
         setData(next)
-        if (next && next.settings) {
-          setMailDraft({ ...next.settings.mail })
-          setScanDraft({ ...next.settings.scan })
-          setApiDraft({ ...(next.settings.api || {}) })
-          setRssDraft((next.settings.rss || []).join('\n'))
+        absorbSettings(next)
+        if (next && Array.isArray(next.items)) {
+          setItems(next.items)
+          setPage(next.page || { total: next.items.length, offset: 0, limit: PAGE_SIZE, hasMore: false })
+          if (next.counts) setCounts(next.counts)
         }
+      }
+
+      const stateQuery = (offset) => {
+        const params = new URLSearchParams()
+        params.set('limit', String(PAGE_SIZE))
+        params.set('offset', String(offset))
+        if (topicFilter !== '') params.set('topicId', topicFilter)
+        if (itemFilter !== 'all') params.set('filter', itemFilter)
+        return `state?${params.toString()}`
       }
 
       const refresh = React.useCallback(
         () =>
-          api('state')
+          api(stateQuery(0))
             .then(applyState)
             .catch((error) => setNote({ kind: 'err', text: `${t('load_failed')}: ${error.message}` })),
-        [],
+        [topicFilter, itemFilter],
       )
 
       React.useEffect(() => {
         void refresh()
-      }, [])
+      }, [refresh])
+
+      /** 趋势数据：只在打开「趋势」页时才拉，避免首屏多一次请求。 */
+      const loadStats = React.useCallback(() => {
+        setStatsError('')
+        const params = new URLSearchParams()
+        params.set('days', String(statsDays))
+        if (topicFilter !== '') params.set('topicId', topicFilter)
+        return api(`stats?${params.toString()}`)
+          .then(setStats)
+          .catch((error) => setStatsError(error.message))
+      }, [statsDays, topicFilter])
+
+      React.useEffect(() => {
+        if (tab !== 'stats') return
+        void loadStats()
+      }, [tab, loadStats])
+
+      const loadMore = () => {
+        setBusy('more')
+        api(stateQuery(page.offset + items.length))
+          .then((next) => {
+            absorbSettings(next)
+            setItems((prev) => prev.concat(next.items || []))
+            if (next.page) setPage({ ...next.page, offset: page.offset + items.length })
+            if (next.counts) setCounts(next.counts)
+          })
+          .catch((error) => setNote({ kind: 'err', text: error.message }))
+          .finally(() => setBusy(''))
+      }
+
+      /** 已读 / 收藏的本地回写：只改这一条，不重新拉整页（避免滚动位置丢失）。 */
+      const patchItem = (item, patch) => {
+        setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)))
+        setCounts((prev) => {
+          const out = { ...prev }
+          if (typeof patch.read === 'boolean' && (item.read === true) !== patch.read) {
+            out.unread = Math.max(0, (out.unread || 0) + (patch.read ? -1 : 1))
+          }
+          if (typeof patch.starred === 'boolean' && (item.starred === true) !== patch.starred) {
+            out.starred = Math.max(0, (out.starred || 0) + (patch.starred ? 1 : -1))
+          }
+          return out
+        })
+        api('item', { id: item.id, ...patch }).catch((error) => {
+          // 失败就把本地改动回滚，别让界面和服务端不一致
+          setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...item } : i)))
+          setNote({ kind: 'err', text: error.message })
+        })
+      }
+
+      const markAllRead = () => {
+        setBusy('mark')
+        api('mark-all-read', {})
+          .then((result) => {
+            if (result.state) applyState(result.state)
+            setNote({ kind: 'ok', text: `${t('read_marked')} · ${result.marked}` })
+          })
+          .catch((error) => setNote({ kind: 'err', text: error.message }))
+          .finally(() => setBusy(''))
+      }
 
       const runScan = () => {
         setBusy('scan')
         setNote(null)
         api('scan', {})
           .then((result) => {
-            applyState(result.state)
+            // 扫描返回的 state 是默认第一页；当前可能停在「收藏」或某个方向上，
+            // 所以只同步设置，列表用当前筛选条件重新拉，别把筛选悄悄重置掉。
+            absorbSettings(result.state)
+            void refresh()
             const head =
               result.newCount > 0
                 ? `${t('scan_done')}：${result.newCount} ${t('new_items')}`
@@ -702,7 +1076,8 @@ window.__ModuleLoader__.load({
           },
         })
           .then((result) => {
-            applyState(result.state)
+            absorbSettings(result.state)
+            void refresh()
             setNote({ kind: 'ok', text: t('saved') })
           })
           .catch((error) => setNote({ kind: 'err', text: error.message }))
@@ -719,13 +1094,22 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(''))
       }
 
+      /** 把论文丢进新会话，让 Agent 精读（Host 侧注入的 startAgentSession）。 */
+      const deepRead = (item) => {
+        try {
+          startAgentSession(buildDeepReadPrompt(item, locale))
+        } catch (error) {
+          setNote({ kind: 'err', text: `${t('deep_read_failed')}: ${error.message}` })
+          return
+        }
+        if (item.read !== true) patchItem(item, { read: true })
+      }
+
       if (data === null) {
         return h('div', { className: 'drr-root' }, h('div', { className: 'drr-empty' }, '…'))
       }
 
-      const allItems = data.items || []
       const topics = data.topics || []
-      const items = topicFilter === '' ? allItems : allItems.filter((i) => i.topicId === topicFilter)
 
       const noteEl =
         note === null
@@ -738,32 +1122,200 @@ window.__ModuleLoader__.load({
               note.text,
             )
 
+      const emptyText =
+        counts.all === 0
+          ? t('empty_items')
+          : itemFilter === 'unread'
+            ? t('empty_unread')
+            : itemFilter === 'starred'
+              ? t('empty_starred')
+              : t('empty_filtered')
+
+      const filterButtons = [
+        ['all', t('filter_items'), counts.all],
+        ['unread', t('filter_unread'), counts.unread],
+        ['starred', t('filter_starred'), counts.starred],
+      ]
+
+      const filterBar = h(
+        'div',
+        { className: 'drr-filters' },
+        h(
+          'div',
+          { className: 'drr-seg' },
+          filterButtons.map(([value, label, count]) =>
+            h(
+              'button',
+              {
+                key: value,
+                className: itemFilter === value ? 'drr-seg-on' : '',
+                onClick: () => setItemFilter(value),
+              },
+              label,
+              h('span', { className: 'drr-seg-count' }, String(count || 0)),
+            ),
+          ),
+        ),
+        topics.length > 1
+          ? h(
+              'select',
+              {
+                className: 'drr-select',
+                style: { width: 'auto', minWidth: '160px' },
+                value: topicFilter,
+                onChange: (e) => setTopicFilter(e.target.value),
+              },
+              h('option', { value: '' }, t('filter_all')),
+              topics.map((topic) => h('option', { key: topic.id, value: topic.id }, topic.name)),
+            )
+          : null,
+        h('span', { className: 'drr-spacer' }),
+        counts.unread > 0
+          ? h(
+              'button',
+              { className: 'drr-btn drr-btn-sm', onClick: markAllRead, disabled: busy === 'mark' },
+              t('mark_all_read'),
+            )
+          : null,
+      )
+
       const itemsTab = h(
         'div',
         null,
         noteEl,
-        topics.length > 1
+        filterBar,
+        items.length === 0
+          ? h('div', { className: 'drr-empty' }, emptyText)
+          : items.map((item) =>
+              h(ItemCard, {
+                key: item.id,
+                item,
+                t,
+                onToggleRead: (target, next) => patchItem(target, { read: next }),
+                onToggleStar: (target, next) => patchItem(target, { starred: next }),
+                onDeepRead: deepRead,
+              }),
+            ),
+        items.length > 0
           ? h(
               'div',
-              { style: { marginBottom: '12px', display: 'flex', gap: '8px', alignItems: 'center' } },
-              h(
-                'select',
-                {
-                  className: 'drr-select',
-                  style: { width: 'auto', minWidth: '180px' },
-                  value: topicFilter,
-                  onChange: (e) => setTopicFilter(e.target.value),
-                },
-                h('option', { value: '' }, t('filter_all')),
-                topics.map((topic) => h('option', { key: topic.id, value: topic.id }, topic.name)),
-              ),
-              h('span', { className: 'drr-count' }, `${items.length}`),
+              { className: 'drr-more' },
+              page.hasMore
+                ? h(
+                    'button',
+                    { className: 'drr-btn', onClick: loadMore, disabled: busy === 'more' },
+                    `${t('load_more')} (${items.length}/${page.total})`,
+                  )
+                : h('span', { className: 'drr-hint' }, t('no_more')),
             )
           : null,
-        items.length === 0
-          ? h('div', { className: 'drr-empty' }, t('empty_items'))
-          : items.map((item) => h(ItemCard, { key: item.id, item, t })),
       )
+
+      const statsTab = (() => {
+        if (statsError !== '') {
+          return h('div', { className: 'drr-note drr-note-err' }, `${t('stats_load_failed')}: ${statsError}`)
+        }
+        if (stats === null) {
+          return h('div', { className: 'drr-empty' }, '…')
+        }
+        const dayOptions = [30, 90, 180, 365, 730]
+        const peak = Math.max(1, Number(stats.weeklyPeak) || 0)
+        const weeks = Array.isArray(stats.weeks) ? stats.weeks : []
+        const cards = [
+          [t('stats_total'), stats.total],
+          [t('stats_read'), stats.readCount],
+          [t('stats_starred'), stats.starredCount],
+          [t('stats_summarized'), stats.summarizedCount],
+        ]
+        return h(
+          'div',
+          null,
+          h(
+            'div',
+            { className: 'drr-filters' },
+            h('span', { className: 'drr-hint', style: { margin: '0 6px 0 0' } }, t('stats_days')),
+            h(
+              'div',
+              { className: 'drr-seg' },
+              dayOptions.map((days) =>
+                h(
+                  'button',
+                  {
+                    key: days,
+                    className: statsDays === days ? 'drr-seg-on' : '',
+                    onClick: () => setStatsDays(days),
+                  },
+                  `${days}${t('days_unit_short')}`,
+                ),
+              ),
+            ),
+            h('span', { className: 'drr-spacer' }),
+            topics.length > 1
+              ? h(
+                  'select',
+                  {
+                    className: 'drr-select',
+                    style: { width: 'auto', minWidth: '160px' },
+                    value: topicFilter,
+                    onChange: (e) => setTopicFilter(e.target.value),
+                  },
+                  h('option', { value: '' }, t('filter_all')),
+                  topics.map((topic) => h('option', { key: topic.id, value: topic.id }, topic.name)),
+                )
+              : null,
+          ),
+          stats.total === 0
+            ? h('div', { className: 'drr-empty' }, t('stats_empty'))
+            : h(
+                'div',
+                null,
+                h(
+                  'div',
+                  { className: 'drr-stats-cards' },
+                  cards.map(([label, value]) =>
+                    h(
+                      'div',
+                      { key: label, className: 'drr-stat' },
+                      h('div', { className: 'drr-stat-num' }, String(value ?? 0)),
+                      h('div', { className: 'drr-stat-label' }, label),
+                    ),
+                  ),
+                ),
+                h('div', { className: 'drr-list-title' }, t('stats_weekly')),
+                h(
+                  'div',
+                  { className: 'drr-chart' },
+                  weeks.map((week) =>
+                    h(
+                      'div',
+                      { key: week.week, className: 'drr-bar', title: `${week.week} · ${week.count}` },
+                      h('div', {
+                        className: 'drr-bar-fill',
+                        style: { height: `${Math.round(((Number(week.count) || 0) / peak) * 100)}%` },
+                      }),
+                    ),
+                  ),
+                ),
+                h(
+                  'div',
+                  { className: 'drr-chart-axis' },
+                  h('span', null, weeks.length > 0 ? weeks[0].week : ''),
+                  h('span', null, weeks.length > 0 ? weeks[weeks.length - 1].week : ''),
+                ),
+                h(
+                  'div',
+                  { className: 'drr-lists' },
+                  h(RankList, { title: t('stats_by_source'), rows: stats.bySource, t }),
+                  h(RankList, { title: t('stats_by_venue'), rows: stats.byVenue, t }),
+                  h(RankList, { title: t('stats_by_author'), rows: stats.byAuthor, t }),
+                  topics.length > 1
+                    ? h(RankList, { title: t('stats_by_topic'), rows: stats.byTopic, t })
+                    : null,
+                  h(RankList, { title: t('stats_by_tag'), rows: stats.byTag, t }),
+                ),
+              ),
+        )
+      })()
 
       const topicsTab = h(
         'div',
@@ -807,6 +1359,11 @@ window.__ModuleLoader__.load({
                         (topic.institutions || []).length > 0 ? `单位：${topic.institutions.join(' · ')}` : '',
                         (topic.exclude || []).length > 0 ? `排除：${topic.exclude.join(' · ')}` : '',
                         `库：${(topic.sources || []).join(', ')}`,
+                        (topic.languages || []).length > 0
+                          ? `${t('topic_languages')}：${topic.languages
+                              .map((code) => (code === 'zh' ? t('lang_zh') : t('lang_en')))
+                              .join(' · ')}`
+                          : '',
                       ]
                         .filter(Boolean)
                         .join('　|　'),
@@ -913,6 +1470,15 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'drr-hint' },
                   `${t('last_scan')}: ${scanDraft.lastScanAt ? fmtTime(scanDraft.lastScanAt) : t('never')}`,
+                ),
+                h(
+                  'div',
+                  { className: 'drr-hint' },
+                  `${t('scan_window')}: ${
+                    data && data.status && Number.isFinite(Number(data.status.effectiveLookbackDays))
+                      ? `${data.status.effectiveLookbackDays} ${t('days_unit')}`
+                      : `${scanDraft.lookbackDays} ${t('days_unit')}`
+                  }`,
                 ),
               ),
         ),
@@ -1083,7 +1649,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'drr-tabs' },
-          ['items', 'topics', 'settings'].map((key) =>
+          ['items', 'topics', 'stats', 'settings'].map((key) =>
             h(
               'button',
               {
@@ -1092,14 +1658,20 @@ window.__ModuleLoader__.load({
                 onClick: () => setTab(key),
               },
               t(`tab_${key}`),
-              key === 'items' && allItems.length > 0 ? h('span', { className: 'drr-count' }, String(allItems.length)) : null,
+              key === 'items' && counts.all > 0 ? h('span', { className: 'drr-count' }, String(counts.all)) : null,
             ),
           ),
         ),
         h(
           'div',
           { className: 'drr-body' },
-          tab === 'items' ? itemsTab : tab === 'topics' ? topicsTab : settingsTab,
+          tab === 'items'
+            ? itemsTab
+            : tab === 'topics'
+              ? topicsTab
+              : tab === 'stats'
+                ? statsTab
+                : settingsTab,
         ),
       )
     }
@@ -1120,6 +1692,7 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        clientContext = ctx
         ctx.effect(() => ctx.locale.register(NS, DICT), 'research-radar.locale')
 
         ctx.effect(() => {

@@ -192,6 +192,7 @@ function dotStuff(body) {
 
 /**
  * 把纯文本渲染成简单 HTML（保留段落与换行）。
+ * 仅作为 `digestToHtml` 不可用时的兜底。
  */
 export function textToHtml(text) {
   const escape = (s) =>
@@ -202,6 +203,232 @@ export function textToHtml(text) {
     .join('\n')
   return `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.6;color:#222;max-width:720px;margin:0 auto;padding:16px">${paragraphs}</body></html>`
 }
+
+/* --------------------------- 卡片式邮件 HTML ---------------------------- */
+
+/**
+ * 邮件里的颜色写死成十六进制：Outlook / QQ 邮箱 / 网易邮箱都不支持 CSS 变量，
+ * 部分客户端连 `grid` 和 `flex` 都不支持，所以布局只能用 table + 内联样式。
+ * 配色对齐面板的浅色主题（强调色 #4176e6，不用近黑的 brand-primary）。
+ */
+const MAIL_COLORS = {
+  accent: '#4176e6',
+  accentSoft: '#edf3fe',
+  border: '#e3e5e8',
+  cardBg: '#ffffff',
+  pageBg: '#f5f6f7',
+  text: '#0f1115',
+  muted: '#6b7280',
+  faint: '#9aa0a6',
+  tagBg: '#f1f3f5',
+  okBg: '#e6faed',
+}
+
+const FONT_STACK =
+  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif"
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** 只允许 http/https，防止摘要里出现 javascript: 之类的链接被当成按钮。 */
+function safeUrl(value) {
+  const url = String(value ?? '').trim()
+  return /^https?:\/\//i.test(url) ? url : ''
+}
+
+function chipHtml(text, { color = MAIL_COLORS.muted, bg = MAIL_COLORS.tagBg, bold = false } = {}) {
+  const label = String(text ?? '').trim()
+  if (label === '') return ''
+  return `<span style="display:inline-block;padding:1px 8px;margin:0 4px 4px 0;border-radius:4px;background:${bg};color:${color};font-size:11px;line-height:18px;${bold ? 'font-weight:600;' : ''}">${escapeHtml(label)}</span>`
+}
+
+/** 一行「字段名 / 字段值」，窄屏也不会挤成一团。 */
+function fieldRowHtml(label, value) {
+  const text = String(value ?? '').trim()
+  if (text === '' || text === '摘要未提及') return ''
+  return `<tr><td style="padding:5px 0;vertical-align:top;width:76px;font-size:11px;line-height:18px;color:${MAIL_COLORS.faint};font-weight:600;letter-spacing:.3px;">${escapeHtml(label)}</td><td style="padding:5px 0;vertical-align:top;font-size:13px;line-height:20px;color:${MAIL_COLORS.text};">${escapeHtml(text)}</td></tr>`
+}
+
+/**
+ * 单篇论文的卡片。摘要字段顺序与面板一致（一句话 / 问题 / 方法 / 内容与结论 /
+ * 创新点 / 局限 / 相关性 / 标签）。
+ */
+function paperCardHtml(item, t) {
+  const summary = item.summary !== null && typeof item.summary === 'object' ? item.summary : null
+  const chips = [
+    item.topicName ? chipHtml(item.topicName, { color: MAIL_COLORS.accent, bg: MAIL_COLORS.accentSoft, bold: true }) : '',
+    item.venue ? chipHtml(item.venue) : '',
+    item.publishedAt ? chipHtml(String(item.publishedAt).slice(0, 10)) : '',
+    item.source ? chipHtml(item.source) : '',
+    item.openAccess === true ? chipHtml(t('open_access'), { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg, bold: true }) : '',
+    item.matchedIn ? chipHtml(`${t('matched')} · ${item.matchedIn}`, { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg }) : '',
+  ]
+    .filter(Boolean)
+    .join('')
+
+  const title = escapeHtml(item.title || '(无标题)')
+  const url = safeUrl(item.url)
+  const titleHtml =
+    url === ''
+      ? `<div style="font-size:15px;font-weight:600;line-height:22px;color:${MAIL_COLORS.text};margin:2px 0 8px;">${title}</div>`
+      : `<div style="font-size:15px;font-weight:600;line-height:22px;margin:2px 0 8px;"><a href="${escapeHtml(url)}" style="color:${MAIL_COLORS.text};text-decoration:none;">${title}</a></div>`
+
+  const authors =
+    Array.isArray(item.authors) && item.authors.length > 0
+      ? `<div style="font-size:12px;line-height:18px;color:${MAIL_COLORS.muted};margin:0 0 10px;">${escapeHtml(
+          item.authors.slice(0, 6).join(', ') + (item.authors.length > 6 ? ' 等' : ''),
+        )}</div>`
+      : ''
+
+  let bodyHtml = ''
+  if (summary !== null) {
+    const tldr = String(summary.tldr ?? '').trim()
+    const tldrHtml =
+      tldr === '' || tldr === '摘要未提及'
+        ? ''
+        : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 10px;"><tr><td style="border-left:2px solid ${MAIL_COLORS.accent};background:${MAIL_COLORS.accentSoft};border-radius:0 6px 6px 0;padding:9px 12px;font-size:13px;line-height:20px;color:${MAIL_COLORS.text};"><b style="color:${MAIL_COLORS.accent};font-weight:600;margin-right:6px;">${escapeHtml(t('tldr'))}</b>${escapeHtml(tldr)}</td></tr></table>`
+    const rows = [
+      fieldRowHtml(t('problem'), summary.problem),
+      fieldRowHtml(t('method'), summary.method),
+      fieldRowHtml(t('findings'), summary.findings),
+      fieldRowHtml(t('innovation'), summary.innovation),
+      fieldRowHtml(t('limitations'), summary.limitations),
+      fieldRowHtml(t('relevance'), summary.relevance),
+    ]
+      .filter(Boolean)
+      .join('')
+    const tags =
+      Array.isArray(summary.tags) && summary.tags.length > 0
+        ? `<div style="margin:8px 0 0;">${summary.tags.map((tag) => chipHtml(tag)).join('')}</div>`
+        : ''
+    bodyHtml = tldrHtml + (rows === '' ? '' : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows}</table>`) + tags
+  } else if (item.summaryError) {
+    bodyHtml = `<div style="font-size:12px;line-height:19px;color:${MAIL_COLORS.muted};margin:0 0 8px;"><b style="color:${MAIL_COLORS.text};">${escapeHtml(t('summary_failed'))}</b> ${escapeHtml(item.summaryError)}</div>${
+      item.abstract
+        ? `<div style="font-size:12px;line-height:19px;color:${MAIL_COLORS.muted};">${escapeHtml(String(item.abstract).slice(0, 600))}</div>`
+        : ''
+    }`
+  } else {
+    bodyHtml = `<div style="font-size:12px;line-height:19px;color:${MAIL_COLORS.muted};">${escapeHtml(
+      item.abstract ? String(item.abstract).slice(0, 800) : t('no_abstract'),
+    )}</div>`
+  }
+
+  const footBits = [
+    Number(item.citations) > 0 ? `${t('cited')} ${Number(item.citations)}` : '',
+    url === '' ? '' : `<a href="${escapeHtml(url)}" style="color:${MAIL_COLORS.accent};text-decoration:none;">${item.doi ? `DOI ${escapeHtml(item.doi)}` : '↗'}</a>`,
+  ].filter(Boolean)
+
+  const footHtml =
+    footBits.length === 0
+      ? ''
+      : `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed ${MAIL_COLORS.border};font-size:11px;line-height:18px;color:${MAIL_COLORS.faint};">${footBits.join(' &nbsp;·&nbsp; ')}</div>`
+
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;"><tr><td style="border:1px solid ${MAIL_COLORS.border};border-left:3px solid ${MAIL_COLORS.accent};border-radius:10px;padding:14px 16px;background:${MAIL_COLORS.cardBg};">${chips === '' ? '' : `<div style="margin:0 0 6px;">${chips}</div>`}${titleHtml}${authors}${bodyHtml}${footHtml}</td></tr></table>`
+}
+
+/**
+ * 把一次扫描的新论文渲染成卡片式 HTML 邮件。
+ *
+ * 用 table + 内联样式而不是 `div` + CSS 类：QQ 邮箱 / 网易邮箱 / Outlook
+ * 会剥掉 `<style>` 标签，`flex`/`grid` 也不支持。
+ *
+ * @param {object[]} items 本次新论文
+ * @param {object[]} topics 方向列表（用来分组标题）
+ * @param {{ panelUrl?: string, locale?: string }} [options]
+ */
+export function digestToHtml(items, topics, options = {}) {
+  const locale = options.locale === 'en' ? 'en' : 'zh'
+  const dict =
+    locale === 'en'
+      ? {
+          open_access: 'Open access',
+          matched: 'Match',
+          tldr: 'TL;DR',
+          problem: 'Problem',
+          method: 'Method',
+          findings: 'Findings',
+          innovation: 'Novelty',
+          limitations: 'Limitations',
+          relevance: 'Relevance',
+          summary_failed: 'Summary failed:',
+          no_abstract: 'No abstract available',
+          cited: 'cited',
+          intro: (n) => `${n} new paper${n === 1 ? '' : 's'} in this round.`,
+          papers: (n) => `${n} paper${n === 1 ? '' : 's'}`,
+          open_panel: 'Open the radar panel',
+          footer: 'Generated automatically by DSH Research Radar.',
+        }
+      : {
+          open_access: '开放获取',
+          matched: '命中',
+          tldr: '一句话',
+          problem: '问题',
+          method: '方法',
+          findings: '内容与结论',
+          innovation: '创新点',
+          limitations: '局限',
+          relevance: '相关性',
+          summary_failed: '摘要生成失败：',
+          no_abstract: '该库未提供摘要',
+          cited: '被引',
+          intro: (n) => `本次共发现 ${n} 篇新论文。`,
+          papers: (n) => `${n} 篇`,
+          open_panel: '在面板中查看',
+          footer: '—— 由 DSH 研究前沿雷达自动生成',
+        }
+  const t = (key) => (typeof dict[key] === 'string' ? dict[key] : key)
+
+  const list = Array.isArray(items) ? items : []
+  const topicNames = new Map(
+    (Array.isArray(topics) ? topics : []).map((topic) => [topic.id, topic.name || topic.id]),
+  )
+  const groups = new Map()
+  for (const item of list) {
+    const key = item.topicId || 'unknown'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(item)
+  }
+
+  const panelUrl = safeUrl(options.panelUrl)
+  const buttonHtml =
+    panelUrl === ''
+      ? ''
+      : `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;"><tr><td style="border-radius:6px;background:${MAIL_COLORS.accent};"><a href="${escapeHtml(panelUrl)}" style="display:inline-block;padding:9px 18px;font-size:13px;font-weight:600;color:#ffffff;text-decoration:none;">${escapeHtml(dict.open_panel)}</a></td></tr></table>`
+
+  const sections = []
+  for (const [topicId, group] of groups) {
+    const name = topicNames.get(topicId) ?? topicId
+    sections.push(
+      `<div style="font-size:12px;font-weight:700;letter-spacing:.5px;color:${MAIL_COLORS.accent};margin:0 0 10px;">${escapeHtml(name)} <span style="color:${MAIL_COLORS.faint};font-weight:500;">· ${escapeHtml(dict.papers(group.length))}</span></div>`,
+    )
+    for (const item of group) sections.push(paperCardHtml(item, t))
+  }
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>研究前沿雷达</title></head>
+<body style="margin:0;padding:0;background:${MAIL_COLORS.pageBg};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${MAIL_COLORS.pageBg};padding:18px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;font-family:${FONT_STACK};">
+<tr><td style="padding:0 0 14px;">
+<div style="font-size:17px;font-weight:700;color:${MAIL_COLORS.text};line-height:24px;margin:0 0 4px;">研究前沿雷达</div>
+<div style="font-size:12px;line-height:18px;color:${MAIL_COLORS.muted};">${escapeHtml(dict.intro(list.length))}</div>
+</td></tr>
+<tr><td>${buttonHtml}</td></tr>
+<tr><td>${sections.join('\n')}</td></tr>
+<tr><td style="padding:8px 0 0;font-size:11px;line-height:18px;color:${MAIL_COLORS.faint};">${escapeHtml(dict.footer)}</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`
+}
+
 
 /**
  * 发送一封 multipart/alternative 邮件。

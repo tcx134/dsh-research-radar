@@ -1,16 +1,163 @@
 import { collectFromSource } from './sources.js'
 import { summarizePaper } from './summarize.js'
-import { sendMail, textToHtml } from './mail.js'
+import { sendMail, digestToHtml } from './mail.js'
+import { dedupeKeys } from './dedupe.js'
 
 const MAX_ITEMS_KEPT = 500
 const MAX_TOPICS = 20
+/** 摘要并发的默认路数。LLM 服务通常有速率限制，别开太大。 */
+const SUMMARY_CONCURRENCY = 3
+const DAY_MS = 24 * 60 * 60 * 1000
+/** 增量窗口至少往前看这么多天，挡住跨零点的边界情况（论文的在线日期常晚一两天）。 */
+const MIN_LOOKBACK_DAYS = 2
 
 function nowIso() {
   return new Date().toISOString()
 }
 
+/**
+ * 本次扫描实际要用多大的时间窗口（缺陷 #1 之外的配额优化）。
+ *
+ * 配置里的 `scan.lookbackDays`（默认 30 天）是**上限**：距离上次扫描只过了几小时
+ * 就没必要再扫 30 天 —— 那样每次都会把同一批论文重新拉一遍，白烧 OpenAlex 的
+ * 共享配额（无 key 时全网只有 $0.10/天），然后靠 `seen` 去重全部丢掉。
+ *
+ * 规则：
+ *   - 从没扫过 / 时间戳坏了 / 上次扫描在未来（改过系统时间）→ 用配置值，宁多勿漏；
+ *   - 距上次已超过配置值（比如插件停了两周）→ 也用配置值，不无限往前追；
+ *   - 否则 → `间隔天数 + 2 天` 的滑动窗口，且不小于 `MIN_LOOKBACK_DAYS`。
+ *
+ * @param {string|null|undefined} lastScanAt ISO 时间串
+ * @param {number} configuredDays 配置的 lookbackDays
+ * @param {number} [now] 毫秒时间戳，测试用
+ * @returns {number} 实际窗口天数（整数，1–365）
+ */
+export function effectiveLookbackDays(lastScanAt, configuredDays, now = Date.now()) {
+  const raw =
+    configuredDays === null || configuredDays === undefined || configuredDays === ''
+      ? NaN
+      : Number(configuredDays)
+  const configured = Number.isFinite(raw) ? Math.min(365, Math.max(1, Math.round(raw))) : 30
+  if (configured <= MIN_LOOKBACK_DAYS) return configured
+  const last = Date.parse(String(lastScanAt ?? ''))
+  if (!Number.isFinite(last)) return configured
+  const gapDays = Math.ceil((now - last) / DAY_MS)
+  if (!Number.isFinite(gapDays) || gapDays < 0) return configured
+  return Math.min(configured, Math.max(MIN_LOOKBACK_DAYS, gapDays + MIN_LOOKBACK_DAYS))
+}
+
+/**
+ * 生成「在面板中查看」的带令牌 URL。
+ *
+ * `connection` 服务不一定在（测试 stub、headless 环境），拿不到就返回空串，
+ * 邮件里就不渲染那个按钮 —— 宁可少一个按钮，也不要抛错把整次扫描搞挂。
+ * @param {object} ctx
+ * @returns {string}
+ */
+export function resolvePanelUrl(ctx) {
+  try {
+    if (ctx === null || typeof ctx !== 'object') return ''
+    // 用 ctx.get('connection') 而不是 ctx.connection：对象级 inject 会把整个
+    // apply 推迟到服务就绪之后（桌面端的注入表是启动时一次性收集的），而
+    // ctx.get 拿到的是「当前有没有」这个事实，不需要声明依赖。
+    const connection = typeof ctx.get === 'function' ? ctx.get('connection') : ctx.connection
+    if (connection === null || typeof connection !== 'object') return ''
+    if (typeof connection.authenticatedUrl !== 'function') return ''
+    const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : ctx.webServer
+    const port = webServer === null || typeof webServer !== 'object' ? null : webServer.port
+    if (port === null || port === undefined || Number(port) <= 0) return ''
+    // webServer.protocol 形如 "http:" / "https:"（自带冒号），拼法照抄 host 的
+    // `${protocol}//127.0.0.1:${port}`。
+    const protocol = typeof webServer.protocol === 'string' && webServer.protocol !== '' ? webServer.protocol : 'http:'
+    const url = connection.authenticatedUrl(`${protocol}//127.0.0.1:${String(port)}`)
+    return typeof url === 'string' ? url : ''
+  } catch {
+    return ''
+  }
+}
+
 function topicLabel(topic) {
   return topic.name || topic.id
+}
+
+/**
+ * 限流并发：最多 `limit` 个任务同时跑，结果顺序与输入一致。
+ * 单个任务抛错不会中断整批 —— 交给 `fn` 自己捕获（摘要是「单篇失败只记
+ * summaryError」，不能让一篇挂掉整次扫描）。
+ * @template T, R
+ * @param {T[]} list
+ * @param {number} limit
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @returns {Promise<R[]>}
+ */
+export async function mapLimit(list, limit, fn) {
+  const items = Array.isArray(list) ? list : []
+  const size = Math.max(1, Math.min(Number(limit) || 1, items.length || 1))
+  const results = new Array(items.length)
+  let cursor = 0
+  async function worker() {
+    for (;;) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) return
+      results[index] = await fn(items[index], index)
+    }
+  }
+  await Promise.all(Array.from({ length: size }, () => worker()))
+  return results
+}
+
+/** 单篇摘要：失败重试一次，仍失败就只记 summaryError，不抛。 */
+async function summarizeOne(ctx, config, item, topic) {
+  let lastError = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      item.summary = await summarizePaper(ctx, config, item, topic, undefined)
+      item.summaryError = ''
+      return null
+    } catch (error) {
+      lastError = error
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 2500))
+    }
+  }
+  item.summaryError = String(lastError?.message ?? lastError)
+  return item.summaryError
+}
+
+/**
+ * 从本次抓到的候选里挑出真正要入库的新论文（缺陷 #1 的修复核心）。
+ *
+ * 同一篇论文会在三个层面重复出现，只按 `item.id` 判重是挡不住的：
+ *   1. 跨源：OpenAlex 的 `openalex:10.1016/...` 与 Crossref 的 `crossref:10.1016/...`；
+ *   2. 跨方向：两个方向的关键词都命中了同一篇；
+ *   3. 跨版本：arXiv 预印本与它后来的期刊版。
+ * 所以按规范化键（DOI / arXiv 编号 / 标题+年份）判重，并先按相关度排序再挑，
+ * 保证留下的是信息最全的那条（OpenAlex 带引用数与开放获取标记）。
+ *
+ * @param {{ keys: string[], item: object }[]} candidates
+ * @param {Record<string, string>} [seen] 历史已推送过的键
+ * @returns {object[]} 按相关度降序的新论文
+ */
+export function selectFresh(candidates, seen = {}) {
+  const list = (Array.isArray(candidates) ? candidates : []).filter(
+    (candidate) => candidate !== null && typeof candidate === 'object' && candidate.item !== null && typeof candidate.item === 'object',
+  )
+  list.sort((a, b) => {
+    if (b.item.score !== a.item.score) return b.item.score - a.item.score
+    return String(b.item.publishedAt ?? '').localeCompare(String(a.item.publishedAt ?? ''))
+  })
+  const known = seen !== null && typeof seen === 'object' ? seen : {}
+  const claimed = new Set()
+  const fresh = []
+  for (const candidate of list) {
+    const keys = Array.isArray(candidate.keys) ? candidate.keys : dedupeKeys(candidate.item)
+    if (keys.length === 0) continue
+    if (keys.some((key) => Object.prototype.hasOwnProperty.call(known, key))) continue
+    if (keys.some((key) => claimed.has(key))) continue
+    for (const key of keys) claimed.add(key)
+    fresh.push(candidate.item)
+  }
+  return fresh
 }
 
 /**
@@ -89,6 +236,8 @@ export async function runScan(ctx, config, store, options = {}) {
     newItems: [],
     errors: [],
     mail: null,
+    /** 本次实际使用的抓取窗口（天），下面会按上次扫描时间算出来。 */
+    lookbackDays: null,
   }
 
   if (targets.length === 0) {
@@ -97,7 +246,24 @@ export async function runScan(ctx, config, store, options = {}) {
     return result
   }
 
-  const fresh = []
+  /**
+   * 本次扫描实际使用的时间窗口。上一次扫描之后只过了几小时的话，没必要再扫
+   * 30 天 —— 那些论文全在 `seen` 里，重扫只是白烧配额。规则见
+   * `effectiveLookbackDays()`。`options.lookbackDays` 可强制指定（测试用）。
+   */
+  const lookbackDays =
+    Number.isFinite(Number(options.lookbackDays)) && Number(options.lookbackDays) > 0
+      ? Math.round(Number(options.lookbackDays))
+      : effectiveLookbackDays(settings.scan.lastScanAt, settings.scan.lookbackDays)
+  result.lookbackDays = lookbackDays
+
+  /**
+   * 本次扫描抓到的全部候选（尚未去重）。同一篇论文可能被多个源、多个方向各抓
+   * 一次，先都收进来，再按 score 从高到低挑代表 —— 这样留下的是信息最全的那条
+   * （OpenAlex 带引用数和开放获取标记，通常比 Crossref 那条更好）。
+   * @type {{ item: object, keys: string[] }[]}
+   */
+  const candidates = []
   for (const topic of targets) {
     result.scannedTopics.push({ id: topic.id, name: topicLabel(topic) })
     for (const source of topic.sources) {
@@ -107,61 +273,55 @@ export async function runScan(ctx, config, store, options = {}) {
         max: settings.scan.maxPerTopic,
         rss: settings.rss,
         api: settings.api,
-        lookbackDays: settings.scan.lookbackDays,
+        lookbackDays,
       })
       for (const error of errors) {
         result.errors.push({ topic: topicLabel(topic), ...error })
       }
       for (const raw of items) {
         if (raw === null || typeof raw.id !== 'string' || raw.id === '') continue
-        if (Object.prototype.hasOwnProperty.call(state.seen, raw.id)) continue
-        if (fresh.some((f) => f.id === raw.id)) continue
-        fresh.push({
-          ...raw,
-          topicId: topic.id,
-          topicName: topicLabel(topic),
-          discoveredAt: nowIso(),
-          read: false,
-          summary: null,
-          summaryError: '',
+        // 跨源去重（缺陷 #1）：同一篇论文在不同库里 id 不同，必须按 DOI /
+        // arXiv 编号 / 规范化标题+年份 判重，否则面板和邮件里会重复出现。
+        const keys = dedupeKeys(raw)
+        if (keys.length === 0) continue
+        if (keys.some((key) => Object.prototype.hasOwnProperty.call(state.seen, key))) continue
+        candidates.push({
+          keys,
+          item: {
+            ...raw,
+            topicId: topic.id,
+            topicName: topicLabel(topic),
+            discoveredAt: nowIso(),
+            read: false,
+            summary: null,
+            summaryError: '',
+          },
         })
       }
     }
   }
 
-  // 跨方向去重后按相关度重排，保证最贴题的排在最前面
-  fresh.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score
-    return String(b.publishedAt ?? '').localeCompare(String(a.publishedAt ?? ''))
-  })
+  // 相关度从高到低排序 + 按规范化键去重，挑出真正要入库的新论文
+  const fresh = selectFresh(candidates, state.seen)
 
-  // 逐篇生成结构化摘要（失败不阻断其它论文；单篇最多重试一次）
+  // 逐篇生成结构化摘要（限流并发；失败不阻断其它论文，单篇最多重试一次）
   if (settings.scan.summarize && fresh.length > 0) {
-    for (const item of fresh) {
-      const topic = targets.find((t) => t.id === item.topicId) ?? {}
-      let lastError = null
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          item.summary = await summarizePaper(ctx, config, item, topic, undefined)
-          item.summaryError = ''
-          lastError = null
-          break
-        } catch (error) {
-          lastError = error
-          if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 2500))
-        }
-      }
-      if (lastError !== null) {
-        item.summaryError = String(lastError?.message ?? lastError)
-        result.errors.push({ topic: item.topicName, source: 'summary', message: item.summaryError })
-      }
+    const topicById = new Map(targets.map((t) => [t.id, t]))
+    const failures = await mapLimit(fresh, SUMMARY_CONCURRENCY, (item) =>
+      summarizeOne(ctx, config, item, topicById.get(item.topicId) ?? {}),
+    )
+    for (let index = 0; index < failures.length; index += 1) {
+      if (failures[index] === null) continue
+      result.errors.push({ topic: fresh[index].topicName, source: 'summary', message: failures[index] })
     }
   }
 
   await store.mutate((draft) => {
     for (const item of fresh) {
       draft.items.unshift(item)
-      draft.seen[item.id] = item.discoveredAt
+      // 存全部规范化键（doi / arxiv / 标题+年份 / id），这样下次从另一个源
+      // 抓到同一篇论文时，任意一个键命中就能判重。
+      for (const key of dedupeKeys(item)) draft.seen[key] = item.discoveredAt
     }
     if (draft.items.length > MAX_ITEMS_KEPT) {
       draft.items = draft.items.slice(0, MAX_ITEMS_KEPT)
@@ -176,14 +336,27 @@ export async function runScan(ctx, config, store, options = {}) {
   // 邮件推送
   if (settings.mail.enabled && fresh.length > 0) {
     try {
+      const locale =
+        options.locale === 'en' || options.locale === 'zh'
+          ? options.locale
+          : config !== null && typeof config === 'object' && config.locale === 'en'
+            ? 'en'
+            : 'zh'
       const text = buildDigest(fresh, state.topics)
+      const html = digestToHtml(fresh, state.topics, {
+        panelUrl: resolvePanelUrl(ctx),
+        locale,
+      })
       const info = await sendMail(settings.mail, {
         to: String(settings.mail.to ?? '')
           .split(/[,;\s]+/)
           .filter(Boolean),
-        subject: `[研究前沿雷达] ${fresh.length} 篇新论文 · ${new Date().toLocaleDateString('zh-CN')}`,
+        subject:
+          locale === 'en'
+            ? `[Research Radar] ${fresh.length} new papers · ${new Date().toISOString().slice(0, 10)}`
+            : `[研究前沿雷达] ${fresh.length} 篇新论文 · ${new Date().toLocaleDateString('zh-CN')}`,
         text,
-        html: textToHtml(text),
+        html,
       })
       result.mail = { ok: true, recipients: info.recipients }
       await store.mutate((draft) => {
