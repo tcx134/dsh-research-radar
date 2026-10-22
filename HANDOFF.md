@@ -46,7 +46,7 @@
 - ✅ 五维检索（keywords / authors / venues / institutions / exclude）+ 同维 OR、跨维 AND
 - ✅ 相关性保护（strict 模式），修掉了短缩写污染
 - ✅ LLM 结构化摘要（一句话 / 问题 / 方法 / 内容与结论 / 创新点 / 局限 / 相关性 / 标签）
-- ✅ 卡片式面板（四个页签：最新论文 / 研究方向 / 趋势 / 设置）
+- ✅ 卡片式面板（五个页签：最新论文 / 论文库 / 研究方向 / 趋势 / 设置）
 - ✅ 「试检索」按钮（不写库不摘要，先验证准确率）
 - ✅ 纯 Node 手写 SMTP（零依赖），465 隐式 TLS 与 587 STARTTLS 都支持
 - ✅ 定时扫描（默认 12 小时）
@@ -63,7 +63,7 @@
 - ✅ **解析深度分档**（精简 / 标准 / 深度，同时收窄喂进去的摘要与输出上限，约 1.9k / 5k / 7.6k tokens 每篇）
 - ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
   「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
-- ✅ **173 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **189 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -86,8 +86,8 @@ SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
 I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
-├── index.js       764 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     1861 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── index.js       782 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
+├── client.js     2098 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
@@ -95,9 +95,10 @@ I:\skill\dsh-research-radar\
 │   ├── sources.js 1010 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开
 │   ├── summarize.js 256 行 LLM 结构化摘要（三档解析深度）
 │   ├── mail.js     544 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
-│   ├── scan.js     404 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
-│   └── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
-├── test/                 15 个文件 / 173 个用例（node:test，零依赖）
+│   ├── scan.js     407 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
+│   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
+│   └── library.js  156 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
+├── test/                 16 个文件 / 189 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -129,6 +130,7 @@ export function apply(ctx, config) { ... }
 | POST | `/item` | 改 `read` / `starred` |
 | POST | `/mark-all-read` | 全部标为已读 |
 | GET | `/stats` | 趋势统计（`?days=&topicId=`） |
+| GET | `/library` | 论文库书架（`?groupBy=year\|topic&topicId=`） |
 | POST | `/clear-items` | 清空条目 |
 | POST | `/test-mail` | 发测试邮件 |
 | POST | `/preview-mail` | 预览摘要正文（返回 text + html） |
@@ -176,7 +178,7 @@ window.__ModuleLoader__.load({
 - 注册：`ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({name:'sidebar.panellist', id:PANEL_ID, order:5, label:()=>ctx.locale.bind(NS)('title')}, RadarIcon))`
   + `ctx.slots.inject('main', () => ctx.slots.register({name:'main', key:PANEL_ID, locale:NS}, Panel))`
   —— **`sidebar.panellist` 的 id 和 `main` 的 key 用同一个值就会自动联动**
-- 组件：`RadarIcon` / `Panel`（四 tab）/ `ItemCard` / `TopicForm` / `Field` / `RankList`
+- 组件：`RadarIcon` / `Panel`（五 tab：items / library / topics / stats / settings）/ `ItemCard` / `TopicForm` / `Field` / `RankList`
 - `api(action, body)` 用同源 `fetch` + `x-dsh-research-radar: 1` header
 - **Client 服务**：`apply(ctx)` 把 ctx 存进模块级 `clientContext`，`startAgentSession(prompt)` 用它取
   `ctx.get('uiWorkspace')`（回退 `ctx.uiWorkspace`）调 `startSession(undefined, {prompt, clearPreviousDraft:false})`
@@ -332,7 +334,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，173 个用例，~1s）
+# 0. 单测（最快，189 个用例，~1s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -500,13 +502,13 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ### P3 —— 工程化
 
 **13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**173 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+`node --test test/*.test.js`，**189 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、HTTP 路由、
-Config schema、趋势统计、邮件 HTML、客户端面板渲染冒烟。
+Config schema、趋势统计、论文库分架、邮件 HTML、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 173 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 189 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -520,10 +522,11 @@ Config schema、趋势统计、邮件 HTML、客户端面板渲染冒烟。
 
 1. 读 `README.md`（面向用户）→ 读本文件第四节（环境约束）
 2. 跑第五节的语法检查 + `/state` 端点，确认插件还活着
-3. 用 bcdp 打开 token URL，确认面板四个 tab 都能渲染
-4. **跑一遍单测**：`node --test test/*.test.js`，应该是 173 pass / 0 fail
+3. 用 bcdp 打开 token URL，确认面板五个 tab 都能渲染
+4. **跑一遍单测**：`node --test test/*.test.js`，应该是 189 pass / 0 fail
    （在 DSH 沙箱里跑要加 `--experimental-test-isolation=none`，否则 `spawn EPERM`，见第七节 P3 第 13 条）
-5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；解析深度与时间范围两项见 11.12
+5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；解析深度与时间范围两项见 11.12，
+   论文库书架见 11.13
 6. 每改完一个文件 `node --check`，改完 Host 侧热重载，改完 Client 侧刷新页面验证
 7. 提交前确认没有把 `tmp-*`、`*.bak` 之类带进去
 
@@ -766,16 +769,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `radar/summarize.js` | **`SUMMARY_DEPTHS=['brief','standard','deep']`** + `DEFAULT_SUMMARY_DEPTH='standard'`；`FIELD_SPECS` / `DEPTH_SPECS`（字段集 + `abstractChars` + `maxTokens`）；`normalizeSummaryDepth()` / `summaryDepthSpec()` / `summaryDepthOptions()` / `buildSystemPrompt(depth)`；`summarizePaper(...,depth)` 并把 `summary.depth` 写进结果 |
 | `radar/scan.js` | `mapLimit()` + `SUMMARY_CONCURRENCY=3` + `summarizeOne()`；`selectFresh(candidates, seen)`；`effectiveLookbackDays()` + `MIN_LOOKBACK_DAYS=2`（增量窗口，配置上限 3650 天）；`resolvePanelUrl(ctx)`；`spread: shouldSpread(topicLookback)`；`result.summaryDepth` / `result.lookbackDays`；邮件改 `digestToHtml`；locale 从 `config.locale` 读 |
 | `radar/stats.js` | **新增**（182 行）。`computeStats(items,{days,topicId,now,topLimit,sourceLabels})` / `weekStart()` / `DEFAULT_STATS_DAYS=90` / `MAX_STATS_DAYS=730` / `TOP_LIMIT=8` |
+| `radar/library.js` | **新增**（156 行）。`yearOf()` / `freshnessOf(item,now)`（90 天新 / 365 天内近期 / 超过一年老 / 无日期 unknown，未来日期算新）/ `buildLibrary(items,{groupBy,topicId,now,topicLabel})`；架内排序 `publishedAt` → `citations` → `discoveredAt`；行只带精简字段（`hasSummary` / `summaryDepth` / `ageDays` / `freshness`），不带宽摘要 |
 | `radar/mail.js` | `MAIL_COLORS` / `FONT_STACK` / `escapeHtml` / `safeUrl` / `chipHtml` / `fieldRowHtml` / `paperCardHtml` / `digestToHtml(items,topics,{panelUrl,locale})`；`textToHtml` 保留作兜底 |
-| `index.js` | `import { Config, validateConfig }`、`export { Config }`；`paginateItems()` + `DEFAULT_ITEM_LIMIT=50` + `MAX_ITEM_LIMIT=500`；`publicState(query)` 返回 `page` / `counts` / `summaryDepths`，`status.effectiveLookbackDays` 取各方向最大值；`POST /item` 支持 `read`+`starred`；新增 `POST /mark-all-read`；新增 `GET /stats`；`POST /preview` 传 `spread`；`POST /scan` 支持 `lookbackDays` 强制窗口并回传 `summaryDepth`；`POST /settings` 的 `scan` 分支含 `summaryDepth` 与 1–3650 天窗口；`preview-mail` 返回 `html`；`toLanguageList()` + topics/Agent 工具的 `languages`、Agent 的 `lookbackDays`/`summaryDepth` |
-| `client.js` | 筛选器（全部/未读/收藏 + 计数）、方向下拉、`loadMore()`、`patchItem()`、`markAllRead()`；`ItemCard({item,t,onToggleRead,onToggleStar,onDeepRead})`；**🔍 精读按钮** + `buildDeepReadPrompt(item,locale)` + `startAgentSession(prompt)`（模块级 `clientContext` 接 `apply(ctx)` 的 ctx，走 `uiWorkspace.startSession`）；第四个页签「趋势」（`RankList` + 周柱状图）；方向表单的「文献语言」复选框；**设置页的常用时间范围预设（半年/1年/2年/3年）+ 回溯检索按钮 + 解析深度 seg**；扫描提示条报告「本次窗口 N 天 · 解析深度 X」；新增 CSS `.drr-card-read` / `.drr-dot` / `.drr-chip-star` / `.drr-seg` / `.drr-more` / `.drr-stat*` / `.drr-chart*` / `.drr-list*` / `.drr-btn-deep` / `.drr-presets*` / `.drr-hint-inline`；DICT 加 50+ 个键 |
-| `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`；`scripts.test = "node --test test/*.test.js"` |
+| `index.js` | `import { Config, validateConfig }`、`export { Config }`；`paginateItems()` + `DEFAULT_ITEM_LIMIT=50` + `MAX_ITEM_LIMIT=500`；`publicState(query)` 返回 `page` / `counts` / `summaryDepths`，`status.effectiveLookbackDays` 取各方向最大值；`POST /item` 支持 `read`+`starred`；新增 `POST /mark-all-read`；新增 `GET /stats`；**新增 `GET /library`**；`POST /preview` 传 `spread`；`POST /scan` 支持 `lookbackDays` 强制窗口并回传 `summaryDepth`；`POST /settings` 的 `scan` 分支含 `summaryDepth` 与 1–3650 天窗口；`preview-mail` 返回 `html`；`toLanguageList()` + topics/Agent 工具的 `languages`、Agent 的 `lookbackDays`/`summaryDepth` |
+| `client.js` | 筛选器（全部/未读/收藏 + 计数）、方向下拉、`loadMore()`、`patchItem()`、`markAllRead()`；`ItemCard({item,t,onToggleRead,onToggleStar,onDeepRead})`；**🔍 精读按钮** + `buildDeepReadPrompt(item,locale)` + `startAgentSession(prompt)`（模块级 `clientContext` 接 `apply(ctx)` 的 ctx，走 `uiWorkspace.startSession`）；第四个页签「趋势」（`RankList` + 周柱状图）；**第五个页签「论文库」**（`loadLibrary()` 只在打开页签时拉、按年份/方向切换、顶部 6 张数字卡、`.drr-shelf` 书架 + `.drr-book` 行 + 新/老角标、点标题顺手标已读）；方向表单的「文献语言」复选框；**设置页的常用时间范围预设（半年/1年/2年/3年）+ 回溯检索按钮 + 解析深度 seg**；扫描提示条报告「本次窗口 N 天 · 解析深度 X」；新增 CSS `.drr-card-read` / `.drr-dot` / `.drr-chip-star` / `.drr-seg` / `.drr-more` / `.drr-stat*` / `.drr-chart*` / `.drr-list*` / `.drr-btn-deep` / `.drr-presets*` / `.drr-hint-inline` / `.drr-lib-summary` / `.drr-shelf*` / `.drr-book*`；DICT 加 70+ 个键 |
+| `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（173 个用例，全部通过）
+### 11.4 测试（189 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 173 / fail 0
+node --test test/*.test.js   →   pass 189 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -794,9 +798,10 @@ node --test test/*.test.js   →   pass 173 / fail 0
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
 | `test/stats.test.js` | 11 | `weekStart` 归周一、窗口夹取（含 `null`→90）、补空周、榜单排序、坏/未来时间戳 |
 | `test/mail.test.js` | 10 | 无 `<style>` 无 `class=`、卡片边色、字段渲染、HTML 转义、挡 `javascript:`、中英文 |
-| `test/index.test.js` | 13 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
+| `test/index.test.js` | 14 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、`GET /library`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
 | `test/summarize.test.js` | 8 | 三档字段集、`abstractChars`/`maxTokens` 严格递增、`summaryDepthOptions`、`buildSystemPrompt` 只列当前档、`buildUserMessage` 按档截断、`summarizePaper` 精简档与深度档 |
-| `test/client-smoke.test.js` | 15 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境 |
+| `test/library.test.js` | 13 | `yearOf` 只认开头四位、`freshnessOf` 90/365 天边界与未来日期、按年份分架与排序、无日期归「未知」、架内排序三级兜底、summary 计数、行只带精简字段、按方向分架与「未分类」、topicId 过滤、脏数据、空库、每架老论文数/未读数 |
+| `test/client-smoke.test.js` | 17 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境 |
 
 `test/helpers.js` 提供 `tempDir(t)` / `makeCtx()` / `call(ctx,req)` / `seedState(dir,state)`。
 
@@ -924,6 +929,11 @@ async function readObject(sha) {
    - `semanticscholar` 源（无 key 会 429，需要限流）。
    - ~~按方向单独设解析深度 / 时间范围~~ —— 目前深度与窗口是**全局**的（`settings.scan`）。
      想更省 token 可以往下做「方向级覆盖」，但先把 11.12 的全局版用一阵子看够不够。
+   - **论文库的深挖方向**（11.13 只做了第一版）：书架上的行目前只能点开外链、不能展开摘要
+     （行是精简过的）；可以给 `.drr-book` 加个点击展开原始 `ItemCard` 的面板；
+     也可以加「只看老论文 / 只看未读」的书架内筛选，或者按 `venue` / 作者分架。
+   - **书架容量 1000 是拍的**（11.13）。真实用量攒上来之后要看一眼 `state.json` 大小；
+     如果超过十几 MB，就改成「把摘要单独存一个 `summaries.json`、`state.json` 只存索引」。
 8. ~~**git**~~ ✅ 已补上。本轮从 npmmirror 下了 MinGit 2.56.0 解压到
    `C:\Users\<user>\.dsh\tools\mingit\`，并完成一次本地提交 `71c6c20`（29 文件 / +5064 −212）。
    细节见 11.10。仍然**没有 remote**（用户决策：只做本地提交，不推 GitHub）。
@@ -1099,7 +1109,7 @@ cd I:\skill\dsh-research-radar
 - `test/finalize.test.js`（17 例，新增 6 例）：`spreadByYear` 每年都有代表、年份内按 相关度→被引→日期 排序、
   条数够用时原样返回、脏数据安全、`finalize(..., spread=true)` 能把 2023 年的老论文带出来而 `spread=false` 不能、
   `shouldSpread` 的 90 天边界与脏值。
-- 合计 **173 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
+- 合计 **189 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
 
 **面板上的即时反馈**：`runScan` 成功后的提示条会追加「（本次窗口 N 天 · 解析深度 标准）」。
 必须有这个 —— 日常扫描是增量的，窗口会被收窄成 3 天，用户看到「0 篇新论文」时不然会以为插件坏了。
@@ -1114,4 +1124,75 @@ cd I:\skill\dsh-research-radar
    说明 **Host 侧改动仍然要重启桌面应用**才生效（和 11.11 同一个坑，不是代码问题）。
 3. 面板上新加的 `drr-presets` 是 flex 行（左侧 56px 标签 + 右侧 seg），窄屏要 `flex-wrap:wrap`，
    否则「回溯检索」按钮会被挤出容器。
+
+### 11.13 论文库（书架）——回答「我到底检索到了哪些、哪些是老论文」（2026-10-22）
+
+**用户诉求（m03695 原话）**：「应该整一个论文库，这样我才知道你检索到了哪些，哪些是老的论文，
+这个论文库可以罗列检索过的论文，或者做成类似书架的形式，分类存放好。这个修改需要在1个小时内搞定」
+
+**为什么需要它**：回溯检索（11.12）把窗口拉到 3 年后，2023/2024 的老论文会混进「最新论文」流水里，
+按发现时间倒序排的话它们只是「刚被发现的旧货」，看不出哪些是补回来的老论文、也不知道库里到底有多少。
+
+**和「最新论文」的分工**：
+- 最新论文 = 按**发现时间**倒序的流水，只回答「这轮扫到了什么」；
+- 论文库   = 按**发表年份**归架的全量书架，回答「我手上到底有哪些、哪些是老论文」。
+
+#### 11.13.1 Host 侧（`radar/library.js`，156 行）
+
+```js
+export function yearOf(publishedAt)                    // '2024-05-01' → '2024'，取不到返回 ''
+export function freshnessOf(item, now = Date.now())    // 'new' | 'recent' | 'old' | 'unknown'
+export function buildLibrary(items, options = {})      // → { groupBy, topicId, total, groups, summary }
+```
+
+- **新鲜度**：90 天内 = `new`、≤365 天 = `recent`、>365 天 = `old`、没日期 = `unknown`。
+  **未来日期也算 `new`** —— 在线优先发表的论文常带未来日期，不能因为差值为负就判成老论文。
+- **分架**：`groupBy='year'`（默认）按发表年份，新到旧，「未知」排最后；
+  `groupBy='topic'` 按方向，篇数从多到少，没方向的归「未分类」。
+- **架内排序**：`publishedAt` 降序 → `citations` 降序 → `discoveredAt` 降序（三级兜底保证顺序稳定）。
+- **行只带精简字段**：`{id,title,authors(前3),authorCount,venue,publishedAt,source,topicId,topicName,
+  url,doi,citations,read,starred,hasSummary,summaryDepth,discoveredAt,ageDays,freshness}` ——
+  **不带 `abstract` 和 `summary`**，1000 篇也不会撑爆一次响应。
+- **`summary` 汇总**：`{oldestYear,newestYear,oldCount,newCount,unreadCount,starredCount,summarizedCount}`，
+  面板顶部 6 张数字卡直接用它。
+- 端点：`GET /library?groupBy=year|topic&topicId=`（在 `GET /stats` 之后注册，同样走 loopback + marker 校验）。
+- **书架容量**：`radar/scan.js` 的 `MAX_ITEMS_KEPT` 从 500 提到 **1000**。原来的 500 是「滚动窗口」语义，
+  回溯捞回来的老论文很容易被后续扫描挤掉；改成书架后必须留得住。实测每篇约 4KB（含结构化摘要），
+  1000 篇约 4MB，`state.json` 单文件读写仍然很快。
+
+#### 11.13.2 Client 侧（第五个页签「论文库」）
+
+- `loadLibrary()` 用 `React.useCallback` 包一层，`useEffect` 只在 `tab === 'library'` 时才拉
+  —— 和趋势页一样，不打开就不发请求，首屏不多一次往返。
+- 顶部：`按年份 / 按方向` seg 切换 + 方向下拉（`topics.length > 1` 才出现）。
+- 6 张数字卡：库内论文 / 覆盖年份（`2023–2026`，只有一年时显示单年）/ 老论文 / 未读 / 收藏 / 已摘要。
+- 书架：`.drr-shelf`（左侧 3px 强调色边）→ 架头（年份 + `N 篇` + `老论文 N` 角标）→ `.drr-book` 行
+  （新/老角标 + 标题链接 + 期刊·日期·引用数）；已读的行标题透明度降到 0.6。
+- 点标题顺手 `patchItem(row, {read: true})`（本地乐观更新 + 失败回滚），和卡片上的「标为已读」同一条路。
+- 空库文案明确指路：「先跑一次扫描；想看更早的论文，把时间范围调大后点『回溯检索』」。
+
+#### 11.13.3 验证
+
+- 新增 `test/library.test.js`（**13 例**）：`yearOf` 只认开头四位、`freshnessOf` 的 90/365 天边界与未来日期、
+  按年份分架与排序、无日期归「未知」、架内三级排序、summary 计数、行只带精简字段、按方向分架与「未分类」、
+  topicId 过滤、脏数据（`null` / `1` / `'x'` / 没 id）、空库、每架老论文数与未读数。
+- `test/index.test.js` 新增 1 例（共 14）：「GET /library 返回按年份分架的论文库」——
+  断言 `groups` 键序 `['2026','2023']`、`summary.oldestYear='2023'`、架上行 `abstract`/`summary` 都是 `undefined`
+  但 `hasSummary=true`、`groupBy=topic` 时 `label` 是中文方向名、`topicId=t-zzz` 返回空。
+- `test/client-smoke.test.js` 新增 2 例（共 17）：论文库页按年份分架渲染（数字卡、两架、引文数、`.drr-shelf` 两个、
+  old 角标存在）、切「按方向」会重新拉带 `groupBy=topic` 的请求 + 空库提示。
+- 全量：`node --test --experimental-test-isolation=none test/*.test.js` → **189 pass / 0 fail / ~1.1s**。
+- 真实 `state.json`（11 篇）实测：`oldestYear=2023`、`newestYear=2026`、`oldCount=6`、`newCount=5`；
+  架分布 `2026:5` / `2025:2` / `2024:2` / `2023:2`；`groupBy=topic` → `金属橡胶(11)`。
+
+#### 11.13.4 本次踩的坑
+
+1. **`MAX_ITEMS_KEPT` 的语义变了**。500 是「滚动窗口」时定的数，现在它是「书架容量」——
+   随手改大前先想清楚：这个值决定回溯捞回来的老论文能留多久，不是性能参数。
+2. **行必须精简**。真实 `state.json` 11 篇就有 44KB（约 4KB/篇，主要是 `abstract` + `summary`）；
+   1000 篇会到 4MB，面板每次切页签都要传一遍。所以 `compactItem()` 只挑 19 个字段
+   （`hasSummary` / `summaryDepth` / `ageDays` / `freshness` 代替原始 `summary`），单行约 300B。
+3. **未来日期**。`freshnessOf` 一开始用 `Math.floor((now - at) / 86400000)` 直接比阈值，
+   在线优先发表（日期在未来）会算出负数 → 落进 `recent`。补了 `if (days < 0) return 'new'`。
+
 

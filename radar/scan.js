@@ -3,7 +3,10 @@ import { summarizePaper, normalizeSummaryDepth } from './summarize.js'
 import { sendMail, digestToHtml } from './mail.js'
 import { dedupeKeys } from './dedupe.js'
 
-const MAX_ITEMS_KEPT = 500
+// 论文库上限。这是「书架」的容量，不再是滚动窗口 —— 回溯检索捞回来的老论文
+// 必须留得住，否则库永远只有最近几天的货。按实测每篇约 4KB（含结构化摘要），
+// 1000 篇约 4MB，state.json 单文件读写仍然很快。
+const MAX_ITEMS_KEPT = 1000
 const MAX_TOPICS = 20
 /** 摘要并发的默认路数。LLM 服务通常有速率限制，别开太大。 */
 const SUMMARY_CONCURRENCY = 3

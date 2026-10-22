@@ -161,6 +161,25 @@ window.__ModuleLoader__.load({
         stats_none: '暂无数据',
         stats_load_failed: '趋势数据加载失败',
         days_unit_short: '天',
+        tab_library: '论文库',
+        lib_group_year: '按年份',
+        lib_group_topic: '按方向',
+        lib_total: '库内论文',
+        lib_span: '覆盖年份',
+        lib_old: '老论文',
+        lib_recent: '近期',
+        lib_unread: '未读',
+        lib_starred: '收藏',
+        lib_summarized: '已摘要',
+        lib_empty: '论文库还是空的。先跑一次扫描；想看更早的论文，把时间范围调大后点「回溯检索」。',
+        lib_badge_old: '老',
+        lib_badge_new: '新',
+        lib_unknown_year: '年份未知',
+        lib_untopiced: '未分类',
+        lib_load_failed: '论文库加载失败',
+        lib_unit: '篇',
+        lib_hint: '这里按发表年份把检索到的论文分架摆放 —— 回溯检索捞回来的老论文会落在更早的架子上。',
+        lib_no_summary: '未摘要',
       },
       en: {
         title: 'Research Radar',
@@ -312,6 +331,25 @@ window.__ModuleLoader__.load({
         stats_none: 'No data',
         stats_load_failed: 'Failed to load trends',
         days_unit_short: 'd',
+        tab_library: 'Library',
+        lib_group_year: 'By year',
+        lib_group_topic: 'By topic',
+        lib_total: 'In library',
+        lib_span: 'Years',
+        lib_old: 'Older',
+        lib_recent: 'Recent',
+        lib_unread: 'Unread',
+        lib_starred: 'Starred',
+        lib_summarized: 'Summarized',
+        lib_empty: 'The library is empty. Run a scan; to pull in older papers, widen the window and hit "Backfill".',
+        lib_badge_old: 'old',
+        lib_badge_new: 'new',
+        lib_unknown_year: 'Year unknown',
+        lib_untopiced: 'Uncategorized',
+        lib_load_failed: 'Failed to load library',
+        lib_unit: '',
+        lib_hint: 'Papers are shelved by publication year — backfilled older papers land on the earlier shelves.',
+        lib_no_summary: 'No summary',
       },
     }
 
@@ -423,6 +461,23 @@ window.__ModuleLoader__.load({
 .drr-list-count{color:var(--dsw-alias-label-secondary,#9a9a9a);font-size:11px;font-variant-numeric:tabular-nums}
 .drr-list-track{flex:0 0 54px;height:4px;border-radius:2px;background:var(--dsw-alias-markdown-tag,#f1f3f5);overflow:hidden}
 .drr-list-bar{height:100%;background:var(--dsw-alias-link,#4176e6);border-radius:2px}
+.drr-lib-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px;margin-bottom:16px}
+.drr-shelf{border-left:3px solid var(--dsw-alias-link,#4176e6);background:var(--dsw-alias-bg-l2,#fafafa);border-radius:6px;padding:9px 12px 4px;margin-bottom:10px}
+.drr-shelf-head{display:flex;align-items:baseline;gap:9px;margin-bottom:5px;flex-wrap:wrap}
+.drr-shelf-year{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.drr-shelf-count{font-size:11px;color:var(--dsw-alias-label-secondary,#9a9a9a)}
+.drr-shelf-badge{font-size:10px;padding:1px 6px;border-radius:9px;background:var(--dsw-alias-state-warn-bg,#fdf3e2);color:var(--dsw-alias-state-warn-label,#a86a00)}
+.drr-book{display:flex;align-items:baseline;gap:7px;padding:5px 0;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.18));font-size:12px;line-height:1.55}
+.drr-book:first-of-type{border-top:none}
+.drr-book-mark{flex:0 0 auto;font-size:9.5px;padding:0 5px;border-radius:8px;line-height:15px}
+.drr-book-mark-new{background:var(--dsw-alias-state-success-bg,#e6faed);color:var(--dsw-alias-state-success-label,#0a7d3c)}
+.drr-book-mark-old{background:var(--dsw-alias-state-warn-bg,#fdf3e2);color:var(--dsw-alias-state-warn-label,#a86a00)}
+.drr-book-mark-none{background:var(--dsw-alias-markdown-tag,#f1f3f5);color:var(--dsw-alias-label-secondary,#9a9a9a)}
+.drr-book-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drr-book-title a{color:inherit;text-decoration:none}
+.drr-book-title a:hover{color:var(--dsw-alias-link,#4176e6);text-decoration:underline}
+.drr-book-meta{flex:0 0 auto;font-size:10.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);font-variant-numeric:tabular-nums}
+.drr-book-read .drr-book-title{opacity:.6}
 `
 
     function api(action, body) {
@@ -953,6 +1008,9 @@ window.__ModuleLoader__.load({
       const [stats, setStats] = React.useState(null)
       const [statsDays, setStatsDays] = React.useState(90)
       const [statsError, setStatsError] = React.useState('')
+      const [library, setLibrary] = React.useState(null)
+      const [libGroupBy, setLibGroupBy] = React.useState('year')
+      const [libError, setLibError] = React.useState('')
 
       /** 把状态载荷里的设置草稿同步进表单（不影响已加载的条目列表）。 */
       const absorbSettings = (next) => {
@@ -1010,6 +1068,22 @@ window.__ModuleLoader__.load({
         if (tab !== 'stats') return
         void loadStats()
       }, [tab, loadStats])
+
+      /** 论文库：同样只在打开页签时才拉。 */
+      const loadLibrary = React.useCallback(() => {
+        setLibError('')
+        const params = new URLSearchParams()
+        params.set('groupBy', libGroupBy)
+        if (topicFilter !== '') params.set('topicId', topicFilter)
+        return api(`library?${params.toString()}`)
+          .then(setLibrary)
+          .catch((error) => setLibError(error.message))
+      }, [libGroupBy, topicFilter])
+
+      React.useEffect(() => {
+        if (tab !== 'library') return
+        void loadLibrary()
+      }, [tab, loadLibrary])
 
       const loadMore = () => {
         setBusy('more')
@@ -1361,6 +1435,167 @@ window.__ModuleLoader__.load({
                     ? h(RankList, { title: t('stats_by_topic'), rows: stats.byTopic, t })
                     : null,
                   h(RankList, { title: t('stats_by_tag'), rows: stats.byTag, t }),
+                ),
+              ),
+        )
+      })()
+
+      const libraryTab = (() => {
+        if (libError !== '') {
+          return h('div', { className: 'drr-note drr-note-err' }, `${t('lib_load_failed')}: ${libError}`)
+        }
+        if (library === null) {
+          return h('div', { className: 'drr-empty' }, '…')
+        }
+        const groups = Array.isArray(library.groups) ? library.groups : []
+        const sum = library.summary || {}
+        const span =
+          sum.oldestYear && sum.newestYear
+            ? sum.oldestYear === sum.newestYear
+              ? sum.oldestYear
+              : `${sum.oldestYear}–${sum.newestYear}`
+            : ''
+        const cards = [
+          [t('lib_total'), library.total],
+          [t('lib_span'), span || '—'],
+          [t('lib_old'), sum.oldCount ?? 0],
+          [t('lib_unread'), sum.unreadCount ?? 0],
+          [t('lib_starred'), sum.starredCount ?? 0],
+          [t('lib_summarized'), sum.summarizedCount ?? 0],
+        ]
+        return h(
+          'div',
+          null,
+          h(
+            'div',
+            { className: 'drr-filters' },
+            h(
+              'div',
+              { className: 'drr-seg' },
+              [
+                ['year', t('lib_group_year')],
+                ['topic', t('lib_group_topic')],
+              ].map(([key, label]) =>
+                h(
+                  'button',
+                  {
+                    key,
+                    className: libGroupBy === key ? 'drr-seg-on' : '',
+                    onClick: () => setLibGroupBy(key),
+                  },
+                  label,
+                ),
+              ),
+            ),
+            topics.length > 1
+              ? h(
+                  'select',
+                  {
+                    className: 'drr-select',
+                    style: { width: 'auto', minWidth: '160px' },
+                    value: topicFilter,
+                    onChange: (event) => setTopicFilter(event.target.value),
+                  },
+                  h('option', { value: '' }, t('filter_all')),
+                  topics.map((topic) => h('option', { key: topic.id, value: topic.id }, topic.name)),
+                )
+              : null,
+          ),
+          h('div', { className: 'drr-hint', style: { margin: '2px 0 12px' } }, t('lib_hint')),
+          h(
+            'div',
+            { className: 'drr-lib-summary' },
+            cards.map(([label, value]) =>
+              h(
+                'div',
+                { className: 'drr-stat', key: label },
+                h('div', { className: 'drr-stat-num' }, String(value ?? 0)),
+                h('div', { className: 'drr-stat-label' }, label),
+              ),
+            ),
+          ),
+          groups.length === 0
+            ? h('div', { className: 'drr-empty' }, t('lib_empty'))
+            : groups.map((group) =>
+                h(
+                  'div',
+                  { className: 'drr-shelf', key: group.key },
+                  h(
+                    'div',
+                    { className: 'drr-shelf-head' },
+                    h(
+                      'span',
+                      { className: 'drr-shelf-year' },
+                      group.key === '未知' || group.key === '未分类'
+                        ? t(group.key === '未分类' ? 'lib_untopiced' : 'lib_unknown_year')
+                        : group.label,
+                    ),
+                    h(
+                      'span',
+                      { className: 'drr-shelf-count' },
+                      `${group.count} ${t('lib_unit')}`,
+                    ),
+                    group.oldCount > 0
+                      ? h(
+                          'span',
+                          { className: 'drr-shelf-badge' },
+                          `${t('lib_old')} ${group.oldCount}`,
+                        )
+                      : null,
+                  ),
+                  group.items.map((row) =>
+                    h(
+                      'div',
+                      {
+                        key: row.id,
+                        className: `drr-book${row.read ? ' drr-book-read' : ''}`,
+                      },
+                      h(
+                        'span',
+                        {
+                          className: `drr-book-mark ${
+                            row.freshness === 'old'
+                              ? 'drr-book-mark-old'
+                              : row.freshness === 'new'
+                                ? 'drr-book-mark-new'
+                                : 'drr-book-mark-none'
+                          }`,
+                        },
+                        row.freshness === 'old'
+                          ? t('lib_badge_old')
+                          : row.freshness === 'new'
+                            ? t('lib_badge_new')
+                            : '?',
+                      ),
+                      h(
+                        'span',
+                        { className: 'drr-book-title', title: row.title },
+                        h(
+                          'a',
+                          {
+                            href: row.url || '#',
+                            target: '_blank',
+                            rel: 'noreferrer noopener',
+                            onClick: () => {
+                              if (!row.read) patchItem(row, { read: true })
+                            },
+                          },
+                          row.title || row.id,
+                        ),
+                      ),
+                      h(
+                        'span',
+                        { className: 'drr-book-meta' },
+                        [
+                          row.venue || '',
+                          row.publishedAt ? String(row.publishedAt).slice(0, 10) : '',
+                          row.citations > 0 ? `引 ${row.citations}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' · '),
+                      ),
+                    ),
+                  ),
                 ),
               ),
         )
@@ -1775,7 +2010,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'drr-tabs' },
-          ['items', 'topics', 'stats', 'settings'].map((key) =>
+          ['items', 'library', 'topics', 'stats', 'settings'].map((key) =>
             h(
               'button',
               {
@@ -1793,11 +2028,13 @@ window.__ModuleLoader__.load({
           { className: 'drr-body' },
           tab === 'items'
             ? itemsTab
-            : tab === 'topics'
-              ? topicsTab
-              : tab === 'stats'
-                ? statsTab
-                : settingsTab,
+            : tab === 'library'
+              ? libraryTab
+              : tab === 'topics'
+                ? topicsTab
+                : tab === 'stats'
+                  ? statsTab
+                  : settingsTab,
         ),
       )
     }

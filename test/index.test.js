@@ -191,6 +191,87 @@ test('GET /stats 返回趋势统计，days/topicId 生效', async (t) => {
   ctx2.disposeAll()
 })
 
+test('GET /library 返回按年份分架的论文库', async (t) => {
+  const dir = await tempDir(t)
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+  await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/topics',
+    headers: { 'content-type': 'application/json' },
+    body: { op: 'upsert', topic: { id: 't-a', name: '金属橡胶', keywords: ['metal rubber'] } },
+  })
+  ctx.disposeAll()
+
+  const store = await import('../radar/store.js')
+  const s = store.createStore({}, { dataDir: dir })
+  await s.mutate((state) => {
+    state.items = [
+      {
+        id: 'openalex:W1',
+        topicId: 't-a',
+        topicName: '金属橡胶',
+        source: 'openalex',
+        title: 'Fresh paper',
+        venue: 'Wear',
+        publishedAt: '2026-10-01',
+        authors: ['Li Y'],
+        read: false,
+        starred: false,
+        summary: { tldr: 'x', depth: 'brief' },
+      },
+      {
+        id: 'openalex:W2',
+        topicId: 't-a',
+        topicName: '金属橡胶',
+        source: 'openalex',
+        title: 'Backfilled old paper',
+        venue: 'MSSP',
+        publishedAt: '2023-04-01',
+        authors: ['Wang H', 'Sun Z'],
+        read: true,
+        starred: true,
+        summary: null,
+      },
+    ]
+  })
+
+  const ctx2 = makeCtx()
+  apply(ctx2, { dataDir: dir })
+
+  const byYear = await call(ctx2, { url: '/api/dsh-research-radar/library' })
+  assert.equal(byYear.status, 200)
+  assert.equal(byYear.body.groupBy, 'year')
+  assert.equal(byYear.body.total, 2)
+  assert.deepEqual(
+    byYear.body.groups.map((g) => g.key),
+    ['2026', '2023'],
+  )
+  assert.equal(byYear.body.groups[0].count, 1)
+  assert.equal(byYear.body.groups[1].oldCount, 1)
+  assert.equal(byYear.body.summary.oldestYear, '2023')
+  assert.equal(byYear.body.summary.newestYear, '2026')
+  assert.equal(byYear.body.summary.oldCount, 1)
+  assert.equal(byYear.body.summary.starredCount, 1)
+  assert.equal(byYear.body.summary.summarizedCount, 1)
+  // 架上行是精简的，不带宽摘要
+  assert.equal(byYear.body.groups[0].items[0].abstract, undefined)
+  assert.equal(byYear.body.groups[0].items[0].summary, undefined)
+  assert.equal(byYear.body.groups[0].items[0].hasSummary, true)
+  assert.equal(byYear.body.groups[0].items[0].summaryDepth, 'brief')
+
+  const byTopic = await call(ctx2, { url: '/api/dsh-research-radar/library?groupBy=topic' })
+  assert.equal(byTopic.body.groupBy, 'topic')
+  assert.equal(byTopic.body.groups[0].key, 't-a')
+  assert.equal(byTopic.body.groups[0].label, '金属橡胶')
+  assert.equal(byTopic.body.groups[0].count, 2)
+
+  const scoped = await call(ctx2, { url: '/api/dsh-research-radar/library?topicId=t-zzz' })
+  assert.equal(scoped.body.total, 0)
+  assert.deepEqual(scoped.body.groups, [])
+  ctx2.disposeAll()
+})
+
 test('非 loopback Host 与缺少客户端标记都返回 403', async (t) => {
   const dir = await tempDir(t)
   const ctx = makeCtx()

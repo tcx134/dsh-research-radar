@@ -4,6 +4,7 @@ import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
+import { buildLibrary } from './radar/library.js'
 import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
 
 export const name = 'dsh-research-radar'
@@ -287,6 +288,23 @@ export function apply(ctx, config) {
                 days: url.searchParams.get('days'),
                 topicId: url.searchParams.get('topicId') ?? '',
                 sourceLabels: SOURCE_LABELS,
+              }),
+            )
+            return
+          }
+
+          // 论文库（书架）：把检索到的全部论文按发表年份 / 方向分架。
+          // 和 /state 的区别是它不按发现时间分页，而是回答「我手上都有哪些、哪些是老论文」。
+          if (method === 'GET' && action === 'library') {
+            const state = await store.load()
+            const names = new Map(state.topics.map((t) => [t.id, t.name]))
+            sendJson(
+              res,
+              200,
+              buildLibrary(state.items, {
+                groupBy: url.searchParams.get('groupBy') === 'topic' ? 'topic' : 'year',
+                topicId: url.searchParams.get('topicId') ?? '',
+                topicLabel: (id) => names.get(id) ?? '',
               }),
             )
             return
