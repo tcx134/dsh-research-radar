@@ -95,7 +95,7 @@ I:\skill\dsh-research-radar\
 │   ├── sources.js 1010 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开
 │   ├── summarize.js 256 行 LLM 结构化摘要（三档解析深度）
 │   ├── mail.js     544 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
-│   ├── scan.js     403 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
+│   ├── scan.js     404 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
 │   └── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 ├── test/                 15 个文件 / 173 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
