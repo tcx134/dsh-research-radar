@@ -295,13 +295,33 @@ function sampleState() {
     page: { total: 2, offset: 0, limit: 50, hasMore: true },
     counts: { all: 2, unread: 1, starred: 1 },
     settings: {
-      scan: { enabled: true, intervalHours: 12, maxPerTopic: 8, summarize: true, lookbackDays: 30, lastScanAt: null, lastScanNew: 0 },
+      scan: {
+        enabled: true,
+        intervalHours: 12,
+        maxPerTopic: 8,
+        summarize: true,
+        summaryDepth: 'standard',
+        lookbackDays: 30,
+        lastScanAt: null,
+        lastScanNew: 0,
+      },
       api: { mailto: '', openalexKey: '' },
       mail: { enabled: false, host: '', port: 465, secure: true, user: '', pass: '', from: '', to: '', lastSentAt: null },
       rss: [],
     },
     sources: {},
-    status: { scanning: false, lastError: '', storePath: '/tmp/state.json', scanIntervalHours: 12 },
+    summaryDepths: [
+      { key: 'brief', fields: 3, abstractChars: 1500, maxTokens: 350, approxTokens: 1850 },
+      { key: 'standard', fields: 7, abstractChars: 4000, maxTokens: 1000, approxTokens: 5000 },
+      { key: 'deep', fields: 8, abstractChars: 6000, maxTokens: 1600, approxTokens: 7600 },
+    ],
+    status: {
+      scanning: false,
+      lastError: '',
+      storePath: '/tmp/state.json',
+      scanIntervalHours: 12,
+      effectiveLookbackDays: 3,
+    },
   }
 }
 
@@ -713,6 +733,66 @@ test('英文语言环境下界面文案切换成英文', async () => {
     assert.match(text, /Load more/)
     assert.match(text, /Unread/)
     assert.match(text, /Starred/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('设置页能选时间范围预设与解析深度，并随 settings 一起提交', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch(() => ({ body: sampleState() }))
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '设置').props.onClick()
+    tree = await mount(mini, Panel)
+
+    // 时间范围预设：点「1 年」应把 lookbackDays 改成 365
+    buttonByText(tree, '1 年').props.onClick()
+    tree = await mount(mini, Panel)
+    assert.equal(buttonByText(tree, '1 年').props.className, 'drr-seg-on')
+
+    // 解析深度：默认 standard 高亮，点「精简」切到 brief
+    assert.equal(buttonByText(tree, '标准 · 5k').props.className, 'drr-seg-on')
+    buttonByText(tree, '精简 · 1.9k').props.onClick()
+    tree = await mount(mini, Panel)
+
+    fetchStub.calls.length = 0
+    buttonByText(tree, '保存').props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const post = fetchStub.calls.find((c) => c.method === 'POST' && c.url.endsWith('/settings'))
+    assert.ok(post, '保存设置应该 POST /settings')
+    assert.equal(post.body.settings.scan.lookbackDays, 365)
+    assert.equal(post.body.settings.scan.summaryDepth, 'brief')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('「回溯检索」用当前窗口强制扫描，不被增量窗口收窄', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/scan')) {
+      return { body: { ok: true, newCount: 2, lookbackDays: 730, summaryDepth: 'standard', errors: [], mail: null, items: [], state: sampleState() } }
+    }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '设置').props.onClick()
+    tree = await mount(mini, Panel)
+    buttonByText(tree, '2 年').props.onClick()
+    tree = await mount(mini, Panel)
+
+    fetchStub.calls.length = 0
+    buttonByText(tree, '回溯检索').props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const post = fetchStub.calls.find((c) => c.method === 'POST' && c.url.endsWith('/scan'))
+    assert.ok(post, '回溯检索应该 POST /scan')
+    assert.equal(post.body.lookbackDays, 730)
   } finally {
     fetchStub.restore()
   }

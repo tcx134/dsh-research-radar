@@ -60,7 +60,10 @@
 - ✅ **趋势统计**（第四个页签：周柱状图 + 来源 / 期刊 / 作者 / 标签榜单）
 - ✅ **中文文献**（方向里勾「中文文献」，OpenAlex / PubMed 服务端过滤，其余源本地判定）
 - ✅ **Agent 精读联动**（卡片上的 🔍 精读：把论文丢进新会话让 Agent 读全文，不自动发送）
-- ✅ **152 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **解析深度分档**（精简 / 标准 / 深度，同时收窄喂进去的摘要与输出上限，约 1.9k / 5k / 7.6k tokens 每篇）
+- ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
+  「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
+- ✅ **167 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -83,18 +86,18 @@ SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
 I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
-├── index.js       717 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     1734 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── index.js       761 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
+├── client.js     1851 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
-│   ├── config.js   118 行 Config schema（手写 Standard Schema v1，零依赖）
-│   ├── dedupe.js   124 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
-│   ├── store.js    363 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
-│   ├── sources.js  907 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤
-│   ├── summarize.js 182 行 LLM 结构化摘要
-│   ├── mail.js     543 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
-│   ├── scan.js     374 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
-│   └── stats.js    181 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
-├── test/                 14 个文件 / 152 个用例（node:test，零依赖）
+│   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
+│   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
+│   ├── store.js    371 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
+│   ├── sources.js  908 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤
+│   ├── summarize.js 256 行 LLM 结构化摘要（三档解析深度）
+│   ├── mail.js     544 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
+│   ├── scan.js     400 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
+│   └── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
+├── test/                 15 个文件 / 167 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -118,19 +121,22 @@ export function apply(ctx, config) { ... }
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/state` | 方向 + 最近 200 条 + 脱敏设置 + 源标签 + 状态 |
+| GET | `/state` | 方向 + 分页条目 + 脱敏设置 + 源标签 + 解析深度档位 + 状态 |
 | POST | `/topics` | `{op:'upsert'\|'delete', topic}` |
 | POST | `/settings` | patch `scan` / `mail` / `rss` / `api`；`pass` 传回 `********` 视为不改 |
 | POST | `/preview` | **试检索**，不写库不摘要不去重 |
-| POST | `/scan` | `{topicIds?}` → `{ok, newCount, errors, mail, items, state}` |
-| POST | `/item` | 改 `read` |
+| POST | `/scan` | `{topicIds?, lookbackDays?}` → `{ok, newCount, lookbackDays, summaryDepth, errors, mail, items, state}` |
+| POST | `/item` | 改 `read` / `starred` |
+| POST | `/mark-all-read` | 全部标为已读 |
+| GET | `/stats` | 趋势统计（`?days=&topicId=`） |
 | POST | `/clear-items` | 清空条目 |
 | POST | `/test-mail` | 发测试邮件 |
-| POST | `/preview-mail` | 预览摘要正文 |
+| POST | `/preview-mail` | 预览摘要正文（返回 text + html） |
 
 **Agent 工具** `research_radar`，`action` 枚举：
 `status` / `list_topics` / `add_topic` / `remove_topic` / `scan` / `send_digest`，
-参数支持 `name` / `keywords` / `authors` / `venues` / `institutions` / `exclude` / `sources` / `topicId`。
+参数支持 `name` / `keywords` / `authors` / `venues` / `institutions` / `exclude` / `sources` /
+`languages` / `topicId` / `lookbackDays` / `summaryDepth`。
 
 ### 相关性判定（`radar/sources.js`，这是核心逻辑，改之前务必看懂）
 
@@ -326,7 +332,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，152 个用例，~750ms）
+# 0. 单测（最快，167 个用例，~1s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -350,10 +356,11 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ⚠️ **不要轻易 POST `/scan`** —— 邮件推送开着时会给用户真发信。要验证扫描先在 `/settings` 里关掉
 `mail.enabled`，或者只跑 `/preview`。
 
-**Client 半边的离线冒烟测试**已经固化成 `test/client-smoke.test.js`（6 个用例，不需要浏览器）：
-用极简 React 替身跑 `client.js` 的 factory + apply + 首屏渲染 + 点击筛选 / 标为已读 / 加载更多，
-断言 `mod.inject === ['slots','locale']`、卡片内容、`POST /item` 的 body、`offset` 递增。
-改完 `client.js` 先跑它，再刷新页面。
+**Client 半边的离线冒烟测试**已经固化成 `test/client-smoke.test.js`（15 个用例，不需要浏览器）：
+用极简 React 替身跑 `client.js` 的 factory + apply + 首屏渲染 + 点击筛选 / 标为已读 / 加载更多 /
+趋势页 / 方向表单语言复选框 / 设置页深度与时间范围预设 / 回溯检索，
+断言 `mod.inject === ['slots','locale']`、卡片内容、`POST /item` 的 body、`offset` 递增、
+`POST /scan` 的 `lookbackDays`。改完 `client.js` 先跑它，再刷新页面。
 
 **面板视觉验证**：bcdp 打开 token URL → `bcdp_js` 断言 `.drr-root` 的 `innerText`、`.drr-card` 数量与间距、`getComputedStyle` 的边框/阴影/颜色、`document.querySelectorAll('style[data-plugin="@local/dsh-research-radar"]').length === 1`、console 无 error。
 
@@ -493,12 +500,13 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ### P3 —— 工程化
 
 **13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**152 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
-语言过滤、并发限流、增量窗口、分页筛选、HTTP 路由、Config schema、趋势统计、邮件 HTML、客户端面板渲染冒烟。
+`node --test test/*.test.js`，**167 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+语言过滤、并发限流、增量窗口、解析深度分档、分页筛选、HTTP 路由、Config schema、趋势统计、邮件 HTML、
+客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 152 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 167 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -513,9 +521,9 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 1. 读 `README.md`（面向用户）→ 读本文件第四节（环境约束）
 2. 跑第五节的语法检查 + `/state` 端点，确认插件还活着
 3. 用 bcdp 打开 token URL，确认面板四个 tab 都能渲染
-4. **跑一遍单测**：`node --test test/*.test.js`，应该是 152 pass / 0 fail
+4. **跑一遍单测**：`node --test test/*.test.js`，应该是 167 pass / 0 fail
    （在 DSH 沙箱里跑要加 `--experimental-test-isolation=none`，否则 `spawn EPERM`，见第七节 P3 第 13 条）
-5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；剩下的都是新功能，不是修缺陷
+5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；解析深度与时间范围两项见 11.12
 6. 每改完一个文件 `node --check`，改完 Host 侧热重载，改完 Client 侧刷新页面验证
 7. 提交前确认没有把 `tmp-*`、`*.bak` 之类带进去
 
@@ -558,6 +566,10 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 | 「精读」用 **`uiWorkspace.startSession(undefined, {prompt})`** 而不是往输入框塞字 | 这是宿主给插件的官方口子（`StartSessionOptions extends DraftInitializationOptions`，只有 `prompt` / `clearPreviousDraft` / `agentPreset`）。传 `undefined` 工作区 = 用当前/最近工作区，不用自己找；`clearPreviousDraft:false` 保证不清掉用户已输入的草稿 |
 | 精读提示词**明确要求「不要编造」** | 摘要 + 元数据信息有限，Agent 拿不到全文时最容易胡编数字。宁可让它说「只读到摘要」 |
 | Client 服务用**模块级变量 `clientContext`** 接 `apply(ctx)` 的 ctx | Panel 是纯 React 组件拿不到 ctx；`slots.register({inject})` 的 `inject` 是 `(...args) => Record`，也拿不到 Client 根 ctx 的服务。apply 只跑一次，模块级变量最简单 |
+| 解析深度**同时收窄输入摘要与输出上限** | 只压 `maxTokens` 省不了多少 —— 一篇 6000 字摘要本身就占 ~4k tokens。`brief` 档喂 1500 字 + 350 输出，单篇从 ~7.6k 降到 ~1.9k |
+| 深度档位**只影响新扫描**，不重算历史 | 否则用户在设置里点一下「精简」，历史几百篇会被重烧一遍，比不切更费 |
+| 时间范围上限放到 **3650 天**，另配「回溯检索」按钮 | 只把窗口调大没用：日常扫描是增量的（只往回看「距上次扫描天数 + 2 天」），老论文永远进不来。必须有一个显式的「用整个窗口扫一次」的入口 |
+| 回溯**不常驻**，扫完照常前移 `lastScanAt` | 否则每轮都按 3 年窗口烧配额，正好和「省 token」的诉求相反 |
 
 ---
 
@@ -907,6 +919,8 @@ async function readObject(sha) {
    - 精读结论回写：把会话 id 存进 item，卡片显示「已精读」并能跳回会话；
    - 邮件里也放「精读」深链（需要能带 prompt 打开新会话的 URL scheme，尚未勘察）；
    - `semanticscholar` 源（无 key 会 429，需要限流）。
+   - ~~按方向单独设解析深度 / 时间范围~~ —— 目前深度与窗口是**全局**的（`settings.scan`）。
+     想更省 token 可以往下做「方向级覆盖」，但先把 11.12 的全局版用一阵子看够不够。
 8. ~~**git**~~ ✅ 已补上。本轮从 npmmirror 下了 MinGit 2.56.0 解压到
    `C:\Users\<user>\.dsh\tools\mingit\`，并完成一次本地提交 `71c6c20`（29 文件 / +5064 −212）。
    细节见 11.10。仍然**没有 remote**（用户决策：只做本地提交，不推 GitHub）。
@@ -956,6 +970,9 @@ cd I:\skill\dsh-research-radar
 提交结果：`71c6c20`（parent `35fa645`），29 文件、+5064 −212，`git status --porcelain` 干净。
 暂存区里没有任何 `tmp-*` / `.gui-index.html` / `.combo.js` / `*.bak` 残留（`.gitignore` 已覆盖）。
 
+> 想把它加进 PATH 就 `$env:PATH = 'C:\Users\<user>\.dsh\tools\mingit\cmd;' + $env:PATH`，
+> 但 MinGit 的 `cmd\` 里只有 `git.exe`，`usr\bin\` 才是全套 POSIX 工具，别指望 `bash` / `ssh` 之类。
+
 ### 11.11 重启后的真机验收 + 增量窗口改成按方向算
 
 **用户重启桌面应用后，新代码终于生效了**（重启前 host 里一直挂着旧 `index.js`，见 11.9 第 5 条）。
@@ -999,7 +1016,67 @@ cd I:\skill\dsh-research-radar
 
 **这个改动需要再重启一次**（Host 代码变了）；Client 不用改，刷新页面即可。
 
+### 11.12 解析深度分档 + 时间范围可选（2026-10-22）
 
-> 想把它加进 PATH 就 `$env:PATH = 'C:\Users\<user>\.dsh\tools\mingit\cmd;' + $env:PATH`，
-> 但 MinGit 的 `cmd\` 里只有 `git.exe`，`usr\bin\` 才是全套 POSIX 工具，别指望 `bash` / `ssh` 之类。
+用户提出（原话）：「能不能增加一个时间范围选择，让用户能够选择 1 年或几年内的查阅论文，
+推送的论文解析深度也可以选择，这样可以节省一点 token」。
+
+#### 11.12.1 解析深度分档（省 token 的正解）
+
+关键判断：**光改输出上限省不了多少 token**，因为输入侧（摘要正文）才是大头。所以每档同时收窄
+「喂进去的摘要长度」和「输出上限」：
+
+| 档位 | 字段 | 摘要喂入 | 输出上限 | 单篇预算 |
+| --- | --- | --- | --- | --- |
+| `brief` 精简 | 一句话 / 创新点 / 标签 | 1500 字 | 350 tokens | ~1.9k |
+| `standard` 标准（默认） | 七字段（无局限） | 4000 字 | 1000 tokens | ~5k |
+| `deep` 深度 | 八字段（含局限） | 6000 字 | 1600 tokens | ~7.6k |
+
+- `radar/summarize.js`：`SUMMARY_DEPTHS` / `DEFAULT_SUMMARY_DEPTH` / `DEPTH_SPECS` / `normalizeSummaryDepth()` /
+  `summaryDepthSpec()` / `buildSystemPrompt(depth)` / `summaryDepthOptions()`（给面板报每档 `approxTokens`）；
+  `normalizeSummary(raw, depth)` 按档位只产出该档字段（缺的填「摘要未提及」）；`summarizePaper(..., depth)`
+  把 `summary.depth` 一起写进条目。旧常量 `SYSTEM_PROMPT` / `MAX_ABSTRACT_CHARS` / `MAX_OUTPUT_TOKENS` 已删。
+- `radar/store.js`：`defaultSettings().scan.summaryDepth = 'standard'`，`normalize()` 用 `normalizeSummaryDepth` 兜非法值
+  （老 `state.json` 没有这个键 → 读出来是 `'standard'`，行为不变）。
+- `radar/scan.js`：`options.summaryDepth` 可临时覆盖设置（Agent 一次性精读用），`result.summaryDepth` 在
+  「有没有新论文」之前就赋值，所以空扫也能报告档位。
+- 面板设置页：「解析深度」三段 seg，按钮上直接显示 `精简 · 1.9k` / `标准 · 5k` / `深度 · 7.6k`；
+  关掉「生成结构化摘要」时整块隐藏（不摘要就没有深度可选）。
+- **只影响新扫描的论文**，已有摘要不重算 —— 否则切一次档位就把历史全重烧一遍。
+
+#### 11.12.2 时间范围可选 + 回溯检索
+
+- `lookbackDays` 上限从 365 放宽到 **3650**（10 年）：`effectiveLookbackDays()` 的夹取、`POST /settings` 的夹取同步改。
+- 面板设置页：数字框（1–3650）+「常用范围」预设 seg（半年 / 1 年 / 2 年 / 3 年）+ 说明文字。
+- **回溯检索**按钮：调 `runScan({backfill:true, lookbackDays: scanDraft.lookbackDays})` →
+  `POST /scan` 带 `lookbackDays` → `doScan` 里 `forcedLookback` 直接压过增量窗口，用整个窗口扫一次。
+  这是必须的：日常扫描是增量的（只往回看「距上次扫描天数 + 2 天」），光把窗口调大不会把老论文捞回来。
+  回溯完 `lastScanAt` 照常前移，下一次自动回到增量模式，不会每轮都烧配额。
+- Agent 工具同步：`research_radar` 的 `scan` 支持 `lookbackDays` 与 `summaryDepth` 两个参数，
+  可以直接说「回溯最近三年，用精简档」。
+
+#### 11.12.3 测试与验证
+
+- 新增 `test/summarize.test.js`（8 例）：三档字段集、`abstractChars`/`maxTokens` 严格递增、
+  `approxTokens = abstractChars + maxTokens`、system prompt 只列当前档字段、user 消息按档截断、
+  `summarizePaper` 精简档真的只发 350 tokens、深度档缺字段填「摘要未提及」、不传深度用默认档。
+- `test/store.test.js` / `test/store-file.test.js`：默认 `summaryDepth='standard'`、老 `state.json` 补齐、
+  `'ultra'` 归一成 `'standard'`。
+- `test/scan.test.js`（19 例）：`result.summaryDepth` 默认 / brief / deep / 非法退回 / `options` 覆盖。
+- `test/index.test.js`（13 例）：`/state` 暴露 `summaryDepths`、`POST /settings` 改深度生效、
+  `POST /scan {lookbackDays:365}` 真的用 365 天窗口。
+- `test/client-smoke.test.js`（15 例）：点「1 年」→ `POST /settings` 的 `scan.lookbackDays===365`；
+  点「精简 · 1.9k」→ `scan.summaryDepth==='brief'`；点「2 年」+「回溯检索」→ `POST /scan` 的 `body.lookbackDays===730`。
+- 合计 **167 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
+
+#### 11.12.4 本次踩的坑
+
+1. **`abstract: 'x'.repeat(9000)` 让「deep 档不该截断」的断言假失败** —— deep 的 `abstractChars` 是 6000，
+   9000 字也会被截。测试数据改成 5000 字。
+2. **Client bundle 已经是新的、Host 还是旧的**。这轮改完 `client.js` 后，从 combo 里能 grep 到
+   `backfill` / `summary_depth` / `depth_brief`（host 按 mtime 自动换 rev，刷新页面就生效）；
+   但 `/state` 返回的 `summaryDepths` 是空的、`settings.scan.summaryDepth` 也是空 ——
+   说明 **Host 侧改动仍然要重启桌面应用**才生效（和 11.11 同一个坑，不是代码问题）。
+3. 面板上新加的 `drr-presets` 是 flex 行（左侧 56px 标签 + 右侧 seg），窄屏要 `flex-wrap:wrap`，
+   否则「回溯检索」按钮会被挤出容器。
 

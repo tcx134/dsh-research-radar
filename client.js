@@ -62,7 +62,23 @@ window.__ModuleLoader__.load({
         interval_hours: '扫描间隔（小时）',
         max_per_topic: '每个方向每次最多抓取',
         lookback_days: '只看最近多少天内发表的',
+        lookback_hint: '想看更早的论文就把窗口调大（最长 10 年）。窗口越大，检索和去重越慢，第一次回溯建议先用「回溯检索」跑一次。',
+        lookback_presets: '常用范围',
+        preset_half_year: '半年',
+        preset_one_year: '1 年',
+        preset_two_years: '2 年',
+        preset_three_years: '3 年',
+        backfill: '回溯检索',
+        backfill_running: '回溯中…',
+        backfill_hint: '用上面的窗口一次性把老论文捞回来（会跳过增量窗口）',
+        backfill_done: '回溯完成',
         do_summarize: '用 LLM 生成结构化摘要',
+        summary_depth: '解析深度',
+        depth_brief: '精简',
+        depth_standard: '标准',
+        depth_deep: '深度',
+        depth_hint: '精简 = 一句话 + 创新点 + 标签，token 最省；标准 = 六字段；深度 = 全字段含局限。只影响新扫描的论文，已有摘要不变。',
+        depth_cost: '每篇约',
         api_settings: '检索接口',
         api_mailto: '联系邮箱（OpenAlex / Crossref 推荐填写，可提高配额）',
         api_openalex_key: 'OpenAlex API Key（可选，留空用公共配额）',
@@ -197,7 +213,23 @@ window.__ModuleLoader__.load({
         interval_hours: 'Interval (hours)',
         max_per_topic: 'Max items per topic',
         lookback_days: 'Only papers from the last N days',
+        lookback_hint: 'Widen the window to reach older papers (up to 10 years). A wider window makes the first scan slower — use "Backfill" once.',
+        lookback_presets: 'Presets',
+        preset_half_year: '6 mo',
+        preset_one_year: '1 yr',
+        preset_two_years: '2 yr',
+        preset_three_years: '3 yr',
+        backfill: 'Backfill',
+        backfill_running: 'Backfilling…',
+        backfill_hint: 'Fetch older papers with the window above, ignoring the incremental window',
+        backfill_done: 'Backfill finished',
         do_summarize: 'Generate structured summary with LLM',
+        summary_depth: 'Summary depth',
+        depth_brief: 'Brief',
+        depth_standard: 'Standard',
+        depth_deep: 'Deep',
+        depth_hint: 'Brief = TL;DR + novelty + tags (cheapest); Standard = six fields; Deep = all fields incl. limitations. Applies to new scans only.',
+        depth_cost: 'per paper ~',
         api_settings: 'Query APIs',
         api_mailto: 'Contact email (recommended for OpenAlex / Crossref quotas)',
         api_openalex_key: 'OpenAlex API key (optional)',
@@ -372,6 +404,9 @@ window.__ModuleLoader__.load({
 .drr-seg button.drr-seg-on{background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.18));color:var(--dsw-alias-label-primary,#e6e6e6);font-weight:600}
 .drr-seg-count{opacity:.7;margin-left:4px;font-weight:400}
 .drr-more{display:flex;justify-content:center;padding:8px 0 4px}
+.drr-presets{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.drr-presets-label{font-size:11px;color:var(--dsw-alias-label-secondary,#9a9a9a);flex:0 0 auto;min-width:56px}
+.drr-hint-inline{margin:0;flex:1;min-width:0}
 .drr-stats-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:20px}
 .drr-stat{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.28));border-radius:8px;padding:10px 12px;background:var(--dsw-alias-bg-layer-1,#242424)}
 .drr-stat-num{font-size:20px;font-weight:600;line-height:1.2;color:var(--dsw-alias-link,#4176e6);font-variant-numeric:tabular-nums}
@@ -1020,10 +1055,14 @@ window.__ModuleLoader__.load({
           .finally(() => setBusy(''))
       }
 
-      const runScan = () => {
-        setBusy('scan')
+      const runScan = (options) => {
+        setBusy(options && options.backfill ? 'backfill' : 'scan')
         setNote(null)
-        api('scan', {})
+        const body =
+          options && Number(options.lookbackDays) > 0
+            ? { lookbackDays: Math.round(Number(options.lookbackDays)) }
+            : {}
+        api('scan', body)
           .then((result) => {
             // 扫描返回的 state 是默认第一页；当前可能停在「收藏」或某个方向上，
             // 所以只同步设置，列表用当前筛选条件重新拉，别把筛选悄悄重置掉。
@@ -1031,8 +1070,8 @@ window.__ModuleLoader__.load({
             void refresh()
             const head =
               result.newCount > 0
-                ? `${t('scan_done')}：${result.newCount} ${t('new_items')}`
-                : `${t('scan_done')}：${t('no_new')}`
+                ? `${options && options.backfill ? t('backfill_done') : t('scan_done')}：${result.newCount} ${t('new_items')}`
+                : `${options && options.backfill ? t('backfill_done') : t('scan_done')}：${t('no_new')}`
             const errors = Array.isArray(result.errors) && result.errors.length > 0
             const detail = errors ? `\n${result.errors.map((e) => `${e.source}: ${e.message}`).join('\n')}` : ''
             setNote({ kind: errors ? 'warn' : 'ok', text: head + detail })
@@ -1457,6 +1496,49 @@ window.__ModuleLoader__.load({
                   ),
                 ),
                 h(
+                  'div',
+                  { className: 'drr-presets' },
+                  h('span', { className: 'drr-presets-label' }, t('lookback_presets')),
+                  h(
+                    'div',
+                    { className: 'drr-seg' },
+                    [
+                      [180, 'preset_half_year'],
+                      [365, 'preset_one_year'],
+                      [730, 'preset_two_years'],
+                      [1095, 'preset_three_years'],
+                    ].map(([days, key]) =>
+                      h(
+                        'button',
+                        {
+                          key,
+                          type: 'button',
+                          className: Number(scanDraft.lookbackDays) === days ? 'drr-seg-on' : '',
+                          onClick: () => setScanDraft({ ...scanDraft, lookbackDays: days }),
+                        },
+                        t(key),
+                      ),
+                    ),
+                  ),
+                ),
+                h('div', { className: 'drr-hint' }, t('lookback_hint')),
+                h(
+                  'div',
+                  { className: 'drr-presets' },
+                  h('span', { className: 'drr-presets-label' }, t('backfill')),
+                  h(
+                    'button',
+                    {
+                      className: 'drr-btn drr-btn-sm',
+                      type: 'button',
+                      disabled: busy !== '',
+                      onClick: () => runScan({ backfill: true, lookbackDays: scanDraft.lookbackDays }),
+                    },
+                    busy === 'backfill' ? t('backfill_running') : t('backfill'),
+                  ),
+                  h('span', { className: 'drr-hint drr-hint-inline' }, t('backfill_hint')),
+                ),
+                h(
                   'label',
                   { className: 'drr-check' },
                   h('input', {
@@ -1466,6 +1548,40 @@ window.__ModuleLoader__.load({
                   }),
                   t('do_summarize'),
                 ),
+                scanDraft.summarize === false
+                  ? null
+                  : h(
+                      'div',
+                      { className: 'drr-presets' },
+                      h('span', { className: 'drr-presets-label' }, t('summary_depth')),
+                      h(
+                        'div',
+                        { className: 'drr-seg' },
+                        (Array.isArray(data && data.summaryDepths) && data.summaryDepths.length > 0
+                          ? data.summaryDepths
+                          : [{ key: 'brief' }, { key: 'standard' }, { key: 'deep' }]
+                        ).map((option) =>
+                          h(
+                            'button',
+                            {
+                              key: option.key,
+                              type: 'button',
+                              className:
+                                (scanDraft.summaryDepth || 'standard') === option.key ? 'drr-seg-on' : '',
+                              onClick: () => setScanDraft({ ...scanDraft, summaryDepth: option.key }),
+                            },
+                            `${t(`depth_${option.key}`)}${
+                              Number.isFinite(Number(option.approxTokens))
+                                ? ` · ${Math.round(Number(option.approxTokens) / 100) / 10}k`
+                                : ''
+                            }`,
+                          ),
+                        ),
+                      ),
+                    ),
+                scanDraft.summarize === false
+                  ? null
+                  : h('div', { className: 'drr-hint' }, t('depth_hint')),
                 h(
                   'div',
                   { className: 'drr-hint' },

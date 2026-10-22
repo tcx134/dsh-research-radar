@@ -232,3 +232,36 @@ test('runScan 把扫描时间写到方向自己的 lastScanAt 上', async (t) =>
   assert.ok(saved.topics[0].lastScanAt !== '')
   assert.ok(Number.isFinite(Date.parse(saved.topics[0].lastScanAt)))
 })
+
+test('runScan 把解析深度记在 result 上（默认 standard，可配 brief/deep）', async (t) => {
+  const scanSettings = (summaryDepth) => ({
+    scan: {
+      enabled: true,
+      intervalHours: 12,
+      maxPerTopic: 8,
+      summarize: true,
+      lookbackDays: 30,
+      lastScanAt: null,
+      lastScanNew: 0,
+      ...(summaryDepth === undefined ? {} : { summaryDepth }),
+    },
+  })
+
+  const plain = await storeWithTopic(t, { settings: scanSettings(undefined) })
+  const defaultResult = await runScan({}, {}, plain.store, {})
+  assert.equal(defaultResult.summaryDepth, 'standard')
+
+  const brief = await storeWithTopic(t, { settings: scanSettings('brief') })
+  assert.equal((await runScan({}, {}, brief.store, {})).summaryDepth, 'brief')
+
+  const deep = await storeWithTopic(t, { settings: scanSettings('deep') })
+  assert.equal((await runScan({}, {}, deep.store, {})).summaryDepth, 'deep')
+
+  // 非法档位在 store 归一化阶段就退回默认档，runScan 不会拿到脏值
+  const bogus = await storeWithTopic(t, { settings: scanSettings('ultra') })
+  assert.equal((await runScan({}, {}, bogus.store, {})).summaryDepth, 'standard')
+
+  // options.summaryDepth 可临时覆盖设置（Agent 一次性精读时用）
+  const override = await storeWithTopic(t, { settings: scanSettings('brief') })
+  assert.equal((await runScan({}, {}, override.store, { summaryDepth: 'deep' })).summaryDepth, 'deep')
+})

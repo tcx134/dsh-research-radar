@@ -133,3 +133,42 @@ test('pruneSeen 与 store.pruneSeen 的 keepKeys 语义一致', async (t) => {
   })
   assert.deepEqual(Object.keys(store.get().seen), [])
 })
+
+test('老 state.json 没有 summaryDepth 时补默认档', async (t) => {
+  const dir = await tempDir(t)
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [],
+      items: [],
+      seen: {},
+      settings: { scan: { enabled: true, intervalHours: 6, maxPerTopic: 5, summarize: true, lookbackDays: 90 } },
+    }),
+    'utf8',
+  )
+  const store = createStore({}, { dataDir: dir })
+  const state = await store.load()
+  assert.equal(state.settings.scan.summaryDepth, 'standard')
+  // 老配置里的其它字段不能被覆盖
+  assert.equal(state.settings.scan.lookbackDays, 90)
+  assert.equal(state.settings.scan.intervalHours, 6)
+})
+
+test('落盘的 summaryDepth 非法值会被归一成默认档', async (t) => {
+  const dir = await tempDir(t)
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [],
+      items: [],
+      seen: {},
+      settings: { scan: { summaryDepth: 'ultra' } },
+    }),
+    'utf8',
+  )
+  const store = createStore({}, { dataDir: dir })
+  const state = await store.load()
+  assert.equal(state.settings.scan.summaryDepth, 'standard')
+})

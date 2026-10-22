@@ -1,5 +1,5 @@
 import { collectFromSource } from './sources.js'
-import { summarizePaper } from './summarize.js'
+import { summarizePaper, normalizeSummaryDepth } from './summarize.js'
 import { sendMail, digestToHtml } from './mail.js'
 import { dedupeKeys } from './dedupe.js'
 
@@ -30,14 +30,15 @@ function nowIso() {
  * @param {string|null|undefined} lastScanAt ISO 时间串
  * @param {number} configuredDays 配置的 lookbackDays
  * @param {number} [now] 毫秒时间戳，测试用
- * @returns {number} 实际窗口天数（整数，1–365）
+ * @returns {number} 实际窗口天数（整数，1–3650）
  */
 export function effectiveLookbackDays(lastScanAt, configuredDays, now = Date.now()) {
   const raw =
     configuredDays === null || configuredDays === undefined || configuredDays === ''
       ? NaN
       : Number(configuredDays)
-  const configured = Number.isFinite(raw) ? Math.min(365, Math.max(1, Math.round(raw))) : 30
+  // 上限放到 3650 天（10 年）：用户可以把窗口设成「最近三年」做回溯检索。
+  const configured = Number.isFinite(raw) ? Math.min(3650, Math.max(1, Math.round(raw))) : 30
   if (configured <= MIN_LOOKBACK_DAYS) return configured
   const last = Date.parse(String(lastScanAt ?? ''))
   if (!Number.isFinite(last)) return configured
@@ -108,11 +109,11 @@ export async function mapLimit(list, limit, fn) {
 }
 
 /** 单篇摘要：失败重试一次，仍失败就只记 summaryError，不抛。 */
-async function summarizeOne(ctx, config, item, topic) {
+async function summarizeOne(ctx, config, item, topic, depth) {
   let lastError = null
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      item.summary = await summarizePaper(ctx, config, item, topic, undefined)
+      item.summary = await summarizePaper(ctx, config, item, topic, undefined, depth)
       item.summaryError = ''
       return null
     } catch (error) {
@@ -238,6 +239,8 @@ export async function runScan(ctx, config, store, options = {}) {
     mail: null,
     /** 本次实际使用的抓取窗口（天），下面会按上次扫描时间算出来。 */
     lookbackDays: null,
+    /** 本次摘要用的解析深度（brief / standard / deep）。 */
+    summaryDepth: null,
   }
 
   if (targets.length === 0) {
@@ -318,10 +321,14 @@ export async function runScan(ctx, config, store, options = {}) {
   result.lookbackDays = usedLookbacks.length > 0 ? Math.max(...usedLookbacks) : null
 
   // 逐篇生成结构化摘要（限流并发；失败不阻断其它论文，单篇最多重试一次）
+  // 解析深度决定字段数、摘要截断长度和输出上限，直接关系到每次扫描烧多少 token
+  // options.summaryDepth 可临时覆盖设置（Agent 一次性精读某批论文时用）
+  const depth = normalizeSummaryDepth(options.summaryDepth ?? settings.scan.summaryDepth)
+  result.summaryDepth = depth
   if (settings.scan.summarize && fresh.length > 0) {
     const topicById = new Map(targets.map((t) => [t.id, t]))
     const failures = await mapLimit(fresh, SUMMARY_CONCURRENCY, (item) =>
-      summarizeOne(ctx, config, item, topicById.get(item.topicId) ?? {}),
+      summarizeOne(ctx, config, item, topicById.get(item.topicId) ?? {}, depth),
     )
     for (let index = 0; index < failures.length; index += 1) {
       if (failures[index] === null) continue

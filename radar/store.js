@@ -2,6 +2,7 @@ import { promises as fsp } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { migrateSeenKey, dedupeKeys } from './dedupe.js'
+import { DEFAULT_SUMMARY_DEPTH, normalizeSummaryDepth } from './summarize.js'
 
 /**
  * `seen` 去重字典的保留策略：只留最近 180 天、最多 20000 条。
@@ -19,6 +20,8 @@ export function defaultSettings() {
       intervalHours: 12,
       maxPerTopic: 8,
       summarize: true,
+      // 解析深度：brief（一句话+创新点，最省 token）/ standard / deep（全字段）
+      summaryDepth: DEFAULT_SUMMARY_DEPTH,
       lookbackDays: 30,
       lastScanAt: null,
       lastScanNew: 0,
@@ -247,6 +250,7 @@ function normalize(raw) {
       intervalHours: Math.min(168, Math.max(1, asNumber(scan.intervalHours, d.scan.intervalHours))),
       maxPerTopic: Math.min(30, Math.max(1, asNumber(scan.maxPerTopic, d.scan.maxPerTopic))),
       summarize: asBool(scan.summarize, d.scan.summarize),
+      summaryDepth: normalizeSummaryDepth(scan.summaryDepth),
       lookbackDays: Math.min(3650, Math.max(1, asNumber(scan.lookbackDays, d.scan.lookbackDays))),
       lastScanAt: typeof scan.lastScanAt === 'string' ? scan.lastScanAt : null,
       lastScanNew: asNumber(scan.lastScanNew, 0),
