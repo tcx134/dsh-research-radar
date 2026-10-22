@@ -1,4 +1,4 @@
-import { collectFromSource } from './sources.js'
+import { collectFromSource, shouldSpread } from './sources.js'
 import { summarizePaper, normalizeSummaryDepth } from './summarize.js'
 import { sendMail, digestToHtml } from './mail.js'
 import { dedupeKeys } from './dedupe.js'
@@ -288,9 +288,10 @@ export async function runScan(ctx, config, store, options = {}) {
         rss: settings.rss,
         api: settings.api,
         lookbackDays: topicLookback,
-        // 回溯（窗口被强制指定）时按年份摊开配额，否则 max 条全被最近几天占满，
-        // 用户选了「3 年」看到的还是上周的论文
-        spread: forcedLookback !== null,
+        // 大窗口按年份摊开配额，否则 max 条全被最近几天占满，用户选了「3 年」
+        // 看到的还是上周的论文。判断依据是实际窗口而不是「是不是回溯」——
+        // 新方向首次扫描用的是完整配置窗口（可能 3 年），同样需要摊开。
+        spread: shouldSpread(topicLookback),
       })
       for (const error of errors) {
         result.errors.push({ topic: topicLabel(topic), ...error })
