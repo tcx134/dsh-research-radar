@@ -63,7 +63,7 @@
 - ✅ **解析深度分档**（精简 / 标准 / 深度，同时收窄喂进去的摘要与输出上限，约 1.9k / 5k / 7.6k tokens 每篇）
 - ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
   「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
-- ✅ **167 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **173 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -86,18 +86,18 @@ SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
 I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
-├── index.js       761 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     1851 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── index.js       764 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
+├── client.js     1861 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
 │   ├── store.js    371 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
-│   ├── sources.js  908 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤
+│   ├── sources.js 1010 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开
 │   ├── summarize.js 256 行 LLM 结构化摘要（三档解析深度）
 │   ├── mail.js     544 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
-│   ├── scan.js     400 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
+│   ├── scan.js     403 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
 │   └── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
-├── test/                 15 个文件 / 167 个用例（node:test，零依赖）
+├── test/                 15 个文件 / 173 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -332,7 +332,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，167 个用例，~1s）
+# 0. 单测（最快，173 个用例，~1s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -500,13 +500,13 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ### P3 —— 工程化
 
 **13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**167 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
-语言过滤、并发限流、增量窗口、解析深度分档、分页筛选、HTTP 路由、Config schema、趋势统计、邮件 HTML、
-客户端面板渲染冒烟。
+`node --test test/*.test.js`，**173 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、HTTP 路由、
+Config schema、趋势统计、邮件 HTML、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 167 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 173 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -521,7 +521,7 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 1. 读 `README.md`（面向用户）→ 读本文件第四节（环境约束）
 2. 跑第五节的语法检查 + `/state` 端点，确认插件还活着
 3. 用 bcdp 打开 token URL，确认面板四个 tab 都能渲染
-4. **跑一遍单测**：`node --test test/*.test.js`，应该是 167 pass / 0 fail
+4. **跑一遍单测**：`node --test test/*.test.js`，应该是 173 pass / 0 fail
    （在 DSH 沙箱里跑要加 `--experimental-test-isolation=none`，否则 `spawn EPERM`，见第七节 P3 第 13 条）
 5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；解析深度与时间范围两项见 11.12
 6. 每改完一个文件 `node --check`，改完 Host 侧热重载，改完 Client 侧刷新页面验证
@@ -1055,6 +1055,27 @@ cd I:\skill\dsh-research-radar
 - Agent 工具同步：`research_radar` 的 `scan` 支持 `lookbackDays` 与 `summaryDepth` 两个参数，
   可以直接说「回溯最近三年，用精简档」。
 
+**回溯必须配「按年份摊开配额」，否则时间范围形同虚设**（本轮真机实测发现并修掉）：
+
+- 现象：`preview` 传 `lookbackDays: 30` 和 `lookbackDays: 1095` 返回的 8 条**完全一样**，
+  全是最新几天（2026-10-16 ~ 10-20）。原因是 OpenAlex 只按 `publication_date:desc` 取
+  `per-page = max*4 = 32` 条，热点方向三年内有 18993 条命中，前 32 条自然全被最近几天占满，
+  本地 `finalize` 再按「相关度 + 日期」截 8 条，还是那 8 条。
+- 修法两层（`radar/sources.js`）：
+  1. **宽窗口双路取样**：`lookbackDays > WIDE_WINDOW_DAYS(=90)` 时再发一次
+     `sort=cited_by_count:desc`，两路结果按 OpenAlex work id 合并去重 ——
+     既有「最新的」，也有「窗口内绕不开的高被引经典」。
+  2. **`spreadByYear(items, max)`**：`finalize` 新增第 5 个参数 `spread`，为 true 时按年份分桶、
+     年份从新到旧轮转取（同一年内按 相关度 → 被引 → 日期 排序），保证窗口内每年都有代表。
+     `collectFromSource` 新增 `spread` 透传，`scan.js` 里只在 `forcedLookback !== null`（回溯）时开。
+- 实测效果（`perovskite solar cell`，max=8）：
+  - `days=30 spread=false` → 8 条全 2026 年；
+  - `days=1095 spread=false` → 8 条仍全 2026 年（bug 复现）；
+  - `days=1095 spread=true` → `{2023:2, 2024:2, 2025:2, 2026:2}`，被引 1398 / 1096 / 793 / 761 的经典都进来了。
+- 为什么只在回溯时开：日常增量扫描窗口只有 3 天，摊开没有意义，还会多一次请求。
+  `POST /preview`（试检索）在窗口 > 90 天时同样摊开（`shouldSpread(lookbackDays)`），
+  否则「试检索」看到的和「回溯检索」看到的不是同一批论文，用户没法拿它判断方向配得对不对。
+
 #### 11.12.3 测试与验证
 
 - 新增 `test/summarize.test.js`（8 例）：三档字段集、`abstractChars`/`maxTokens` 严格递增、
@@ -1068,7 +1089,10 @@ cd I:\skill\dsh-research-radar
 - `test/client-smoke.test.js`（15 例）：点「1 年」→ `POST /settings` 的 `scan.lookbackDays===365`；
   点「精简 · 1.9k」→ `scan.summaryDepth==='brief'`；点「2 年」+「回溯检索」→ `POST /scan` 的 `body.lookbackDays===730`，
   且结果提示里带「本次窗口 730 天 · 解析深度 标准」。
-- 合计 **167 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
+- `test/finalize.test.js`（17 例，新增 6 例）：`spreadByYear` 每年都有代表、年份内按 相关度→被引→日期 排序、
+  条数够用时原样返回、脏数据安全、`finalize(..., spread=true)` 能把 2023 年的老论文带出来而 `spread=false` 不能、
+  `shouldSpread` 的 90 天边界与脏值。
+- 合计 **173 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
 
 **面板上的即时反馈**：`runScan` 成功后的提示条会追加「（本次窗口 N 天 · 解析深度 标准）」。
 必须有这个 —— 日常扫描是增量的，窗口会被收窄成 3 天，用户看到「0 篇新论文」时不然会以为插件坏了。

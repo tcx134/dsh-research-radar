@@ -288,6 +288,9 @@ export async function runScan(ctx, config, store, options = {}) {
         rss: settings.rss,
         api: settings.api,
         lookbackDays: topicLookback,
+        // 回溯（窗口被强制指定）时按年份摊开配额，否则 max 条全被最近几天占满，
+        // 用户选了「3 年」看到的还是上周的论文
+        spread: forcedLookback !== null,
       })
       for (const error of errors) {
         result.errors.push({ topic: topicLabel(topic), ...error })

@@ -1,7 +1,7 @@
 import { createStore } from './radar/store.js'
 import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays } from './radar/scan.js'
 import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
-import { SOURCE_LABELS, collectFromSource } from './radar/sources.js'
+import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
 import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
@@ -443,6 +443,8 @@ export function apply(ctx, config) {
             )
             const found = []
             const errors = []
+            // 大窗口试检索同样按年份摊开，否则「试检索」看到的和「回溯检索」看到的不是一回事
+            const spread = shouldSpread(lookbackDays)
             for (const source of sources) {
               const { items, errors: errs } = await collectFromSource({
                 source,
@@ -451,6 +453,7 @@ export function apply(ctx, config) {
                 rss: state.settings.rss,
                 api: state.settings.api,
                 lookbackDays,
+                spread,
               })
               found.push(...items)
               errors.push(...errs)
