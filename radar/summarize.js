@@ -1,27 +1,92 @@
 /**
  * 论文结构化摘要：调用 Harness 已配置的 LLM，输出
  * { tldr, problem, method, findings, innovation, limitations, relevance, tags }
+ *
+ * 解析深度可调（`scan.summaryDepth`）：`brief` 只要一句话+创新点，token 最省；
+ * `standard` 是默认档；`deep` 输出全部字段。字段越少，喂进去的摘要也越短。
  */
 
-const SYSTEM_PROMPT = [
-  '你是一位严谨的科研助理，负责把论文摘要整理成结构化中文情报。',
-  '要求：',
-  '1. 只依据给出的标题与摘要判断，不要编造摘要中没有的实验结果、数据集或数字。',
-  '2. 若摘要信息不足以判断某一项，请写「摘要未提及」，不要猜测。',
-  '3. 严格输出一个 JSON 对象，不要输出 Markdown 代码块、解释或任何前后缀文字。',
-  '4. JSON 字段如下，全部为字符串，除 tags 为字符串数组：',
-  '   tldr       —— 一句话结论（不超过 60 字）',
-  '   problem    —— 论文要解决的问题',
-  '   method     —— 科研方法/技术路线（核心步骤）',
-  '   findings   —— 主要内容与实验结论',
-  '   innovation —— 创新点（相对已有工作的差异）',
-  '   limitations—— 局限或未解决的问题',
-  '   relevance  —— 与用户研究方向的关系（为何值得关注）',
-  '   tags       —— 3-6 个主题标签',
-].join('\n')
+/** 解析深度档位，从最省 token 到最详细。 */
+export const SUMMARY_DEPTHS = ['brief', 'standard', 'deep']
+export const DEFAULT_SUMMARY_DEPTH = 'standard'
 
-const MAX_ABSTRACT_CHARS = 6000
-const MAX_OUTPUT_TOKENS = 1600
+/** 每个字段给 LLM 的说明。 */
+const FIELD_SPECS = {
+  tldr: '   tldr       —— 一句话结论（不超过 60 字）',
+  problem: '   problem    —— 论文要解决的问题',
+  method: '   method     —— 科研方法/技术路线（核心步骤）',
+  findings: '   findings   —— 主要内容与实验结论',
+  innovation: '   innovation —— 创新点（相对已有工作的差异）',
+  limitations: '   limitations—— 局限或未解决的问题',
+  relevance: '   relevance  —— 与用户研究方向的关系（为何值得关注）',
+  tags: '   tags       —— 3-6 个主题标签',
+}
+
+/**
+ * 各档位的字段与预算。`abstractChars` 是喂给模型的摘要截断长度，
+ * `maxTokens` 是输出上限 —— 两处一起收窄才真的省 token。
+ */
+const DEPTH_SPECS = {
+  brief: {
+    fields: ['tldr', 'innovation', 'tags'],
+    abstractChars: 1500,
+    maxTokens: 350,
+  },
+  standard: {
+    fields: ['tldr', 'problem', 'method', 'findings', 'innovation', 'relevance', 'tags'],
+    abstractChars: 4000,
+    maxTokens: 1000,
+  },
+  deep: {
+    fields: ['tldr', 'problem', 'method', 'findings', 'innovation', 'limitations', 'relevance', 'tags'],
+    abstractChars: 6000,
+    maxTokens: 1600,
+  },
+}
+
+/** 把任意输入归一成合法档位，非法值退回默认档。 */
+export function normalizeSummaryDepth(value) {
+  if (typeof value !== 'string') return DEFAULT_SUMMARY_DEPTH
+  const trimmed = value.trim()
+  return SUMMARY_DEPTHS.includes(trimmed) ? trimmed : DEFAULT_SUMMARY_DEPTH
+}
+
+/** 取某档位的预算与字段表（返回的是内部对象，只读用）。 */
+export function summaryDepthSpec(value) {
+  return DEPTH_SPECS[normalizeSummaryDepth(value)]
+}
+
+/**
+ * 给面板用的档位说明：每档的字段数、摘要截断长度、输出上限，
+ * 以及一个粗略的 token 量级（输入按 1 汉字 ≈ 1 token 估，仅用于给用户
+ * 一个「精简档大概能省多少」的相对感觉，不是精确计费）。
+ */
+export function summaryDepthOptions() {
+  return SUMMARY_DEPTHS.map((key) => {
+    const spec = DEPTH_SPECS[key]
+    return {
+      key,
+      fields: spec.fields.length,
+      abstractChars: spec.abstractChars,
+      maxTokens: spec.maxTokens,
+      approxTokens: spec.abstractChars + spec.maxTokens,
+    }
+  })
+}
+
+/** 按档位拼 system prompt —— 字段越少，模型越不容易写长。 */
+export function buildSystemPrompt(depth) {
+  const spec = summaryDepthSpec(depth)
+  return [
+    '你是一位严谨的科研助理，负责把论文摘要整理成结构化中文情报。',
+    '要求：',
+    '1. 只依据给出的标题与摘要判断，不要编造摘要中没有的实验结果、数据集或数字。',
+    '2. 若摘要信息不足以判断某一项，请写「摘要未提及」，不要猜测。',
+    '3. 严格输出一个 JSON 对象，不要输出 Markdown 代码块、解释或任何前后缀文字。',
+    `4. 只输出下面 ${spec.fields.length} 个字段，全部为字符串，除 tags 为字符串数组：`,
+    ...spec.fields.map((field) => FIELD_SPECS[field]),
+  ].join('\n')
+}
 
 function truncate(text, limit) {
   const value = String(text ?? '')
@@ -29,7 +94,8 @@ function truncate(text, limit) {
   return `${value.slice(0, limit)}\n…（摘要已截断）`
 }
 
-function buildUserMessage(item, topic) {
+/** 拼 user 消息。`abstractChars` 由解析深度决定（精简档只喂前 1800 字）。 */
+export function buildUserMessage(item, topic, abstractChars = DEPTH_SPECS.deep.abstractChars) {
   const interests = []
   if (Array.isArray(topic.keywords) && topic.keywords.length > 0) interests.push(`关键词：${topic.keywords.join('、')}`)
   if (Array.isArray(topic.authors) && topic.authors.length > 0) interests.push(`关注作者：${topic.authors.join('、')}`)
@@ -48,7 +114,7 @@ function buildUserMessage(item, topic) {
     `链接：${item.url}`,
   ]
   if (item.matchedIn) lines.push(`检索命中：${item.matchedIn}`)
-  lines.push('', '摘要：', truncate(item.abstract || '（该源未提供摘要）', MAX_ABSTRACT_CHARS))
+  lines.push('', '摘要：', truncate(item.abstract || '（该源未提供摘要）', abstractChars))
   return lines.join('\n')
 }
 
@@ -86,20 +152,18 @@ function asField(value, fallback = '摘要未提及') {
   return fallback
 }
 
-function normalizeSummary(raw) {
+function normalizeSummary(raw, depth) {
+  const fields = summaryDepthSpec(depth).fields
   const tags = Array.isArray(raw.tags)
     ? raw.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 8)
     : []
-  return {
-    tldr: asField(raw.tldr),
-    problem: asField(raw.problem),
-    method: asField(raw.method),
-    findings: asField(raw.findings),
-    innovation: asField(raw.innovation),
-    limitations: asField(raw.limitations),
-    relevance: asField(raw.relevance),
-    tags,
+  const out = {}
+  for (const field of fields) {
+    if (field === 'tags') continue
+    out[field] = asField(raw[field])
   }
+  out.tags = tags
+  return out
 }
 
 function resolveModel(ctx, config) {
@@ -123,19 +187,27 @@ function resolveModel(ctx, config) {
 }
 
 /**
+ * @param {object} ctx Harness host context
+ * @param {object} config 插件配置
+ * @param {object} item 论文
+ * @param {object} topic 方向
+ * @param {AbortSignal} [signal]
+ * @param {'brief'|'standard'|'deep'} [depth] 解析深度（省 token 用），默认 standard
  * @returns {Promise<object>} 结构化摘要
  */
-export async function summarizePaper(ctx, config, item, topic, signal) {
+export async function summarizePaper(ctx, config, item, topic, signal, depth = DEFAULT_SUMMARY_DEPTH) {
   const route = resolveModel(ctx, config)
   if (route === null) {
     throw new Error('未找到可用的 LLM 路由（agentDefaultModel 不可用，且未在插件配置里指定 llmProvider/llmModel）')
   }
 
+  const level = normalizeSummaryDepth(depth)
+  const spec = summaryDepthSpec(level)
   const messages = [
     {
       id: globalThis.crypto?.randomUUID?.() ?? `msg-${Date.now()}`,
       role: 'user',
-      content: [{ type: 'text', text: buildUserMessage(item, topic) }],
+      content: [{ type: 'text', text: buildUserMessage(item, topic, spec.abstractChars) }],
       source: { kind: 'plugin', plugin: 'dsh-research-radar' },
     },
   ]
@@ -147,9 +219,9 @@ export async function summarizePaper(ctx, config, item, topic, signal) {
     provider: route.provider,
     model: route.model,
     messages,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(level),
     temperature: 0.2,
-    maxTokens: MAX_OUTPUT_TOKENS,
+    maxTokens: spec.maxTokens,
     signal,
   })
 
@@ -175,8 +247,9 @@ export async function summarizePaper(ctx, config, item, topic, signal) {
     throw new Error(`LLM 未返回可解析的 JSON（前 200 字：${stripCodeFence(collected).slice(0, 200)}）`)
   }
 
-  const summary = normalizeSummary(parsed)
+  const summary = normalizeSummary(parsed, level)
   summary.model = `${route.provider}/${route.model}`
+  summary.depth = level
   summary.createdAt = new Date().toISOString()
   return summary
 }

@@ -293,6 +293,58 @@ function isExcluded(item, query) {
 }
 
 /**
+ * 宽窗口下按年份分层取样。
+ *
+ * 为什么需要：热点方向（实测「perovskite solar cell」三年内 18993 条命中）
+ * 如果只按「相关度 + 日期倒序」截断，max 条配额会被最近几天的论文占满 ——
+ * 用户把窗口调到 3 年，看到的还是上周的论文，「时间范围选择」形同虚设。
+ * 分层轮转保证窗口内每个年份都有代表，年份内部仍按相关度 / 被引 / 日期排序。
+ *
+ * @param {object[]} items 已打分、已按相关度排序的条目
+ * @param {number} max 要保留的条数
+ */
+export function spreadByYear(items, max) {
+  const list = Array.isArray(items) ? items.filter((i) => i !== null && typeof i === 'object') : []
+  if (list.length === 0) return []
+  const limit = Math.max(1, Math.trunc(Number(max) || 1))
+  if (list.length <= limit) return list.slice(0, limit)
+
+  const buckets = new Map()
+  for (const item of list) {
+    const year = String(item.publishedAt ?? '').slice(0, 4) || '未知'
+    if (!buckets.has(year)) buckets.set(year, [])
+    buckets.get(year).push(item)
+  }
+  // 年份从新到旧（'未知' 排最后），同一年里相关度高 → 被引多 → 日期新
+  const years = [...buckets.keys()].sort((a, b) => {
+    if (a === '未知') return 1
+    if (b === '未知') return -1
+    return b.localeCompare(a)
+  })
+  for (const year of years) {
+    buckets.get(year).sort((a, b) => {
+      if ((b.score ?? 0) !== (a.score ?? 0)) return (b.score ?? 0) - (a.score ?? 0)
+      if ((b.citations ?? 0) !== (a.citations ?? 0)) return (b.citations ?? 0) - (a.citations ?? 0)
+      return String(b.publishedAt ?? '').localeCompare(String(a.publishedAt ?? ''))
+    })
+  }
+
+  const out = []
+  for (let round = 0; out.length < limit; round += 1) {
+    let picked = false
+    for (const year of years) {
+      const bucket = buckets.get(year)
+      if (round >= bucket.length) continue
+      out.push(bucket[round])
+      picked = true
+      if (out.length >= limit) break
+    }
+    if (!picked) break
+  }
+  return out
+}
+
+/**
  * 统一的本地后处理：排除词过滤 + 严格相关性判定 + 命中打分 + 排序 + 截断。
  *
  * 相关性判定（strict=true 时）：
@@ -300,8 +352,10 @@ function isExcluded(item, query) {
  *   - 若方向还配了作者 / 期刊 / 单位，命中这些维度同样算相关（这类维度本身就是强约束）；
  *   - 只有短缩写（MR、AI）命中的结果直接丢弃 —— 这是「搜金属橡胶却推来磁共振」的根因。
  * matchMode='all' 时额外要求所有关键词都命中。
+ *
+ * `spread=true`（宽窗口回溯）时改用按年份分层取样，避免 max 条配额被最近几天占满。
  */
-function finalize(items, query, max, localFilter) {
+function finalize(items, query, max, localFilter, spread = false) {
   const seen = new Set()
   const out = []
   const hasStrong = query.strong.length > 0
@@ -331,6 +385,7 @@ function finalize(items, query, max, localFilter) {
     if (b.score !== a.score) return b.score - a.score
     return String(b.publishedAt ?? '').localeCompare(String(a.publishedAt ?? ''))
   })
+  if (spread) return spreadByYear(out, max)
   return out.slice(0, Math.max(1, max))
 }
 
@@ -440,6 +495,30 @@ function encodeFilter(filter) {
   return filter.replace(/#/g, '%23').replace(/&/g, '%26').replace(/\+/g, '%2B')
 }
 
+/**
+ * 窗口超过这个天数就算「宽窗口」。宽窗口下单按时间倒序取样会被最近几天
+ * 的论文占满整个配额（实测「钙钛矿太阳能电池」三年内 18993 条命中，
+ * 前 32 条全是 10 月 19–20 号的），把窗口调大等于没调。
+ */
+const WIDE_WINDOW_DAYS = 90
+
+/** 这个窗口要不要按年份摊开配额（回溯 / 试检索大窗口时用）。 */
+export function shouldSpread(lookbackDays) {
+  const days = Number(lookbackDays)
+  return Number.isFinite(days) && days > WIDE_WINDOW_DAYS
+}
+
+/** 取一页 OpenAlex works。`sort` 支持 `publication_date:desc` / `cited_by_count:desc`。 */
+async function fetchOpenAlexPage({ filter, perPage, sort, api }) {
+  const url =
+    'https://api.openalex.org/works?filter=' +
+    encodeFilter(filter) +
+    `&per-page=${perPage}&sort=${sort}&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,open_access,type` +
+    mailtoParam(api)
+  const payload = JSON.parse(await getText(url))
+  return Array.isArray(payload?.results) ? payload.results : []
+}
+
 export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
   const venueIds = await resolveVenueIds(query.venues, api)
   if (query.venues.length > 0 && venueIds.length === 0) {
@@ -448,13 +527,27 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
   const filter = openAlexFilter(query, venueIds, lookbackDays)
   if (filter === '') throw new Error('研究方向至少要填关键词 / 作者 / 期刊 / 单位之一')
   const perPage = Math.min(100, Math.max(10, max * 4))
-  const url =
-    'https://api.openalex.org/works?filter=' +
-    encodeFilter(filter) +
-    `&per-page=${perPage}&sort=publication_date:desc&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,open_access,type` +
-    mailtoParam(api)
-  const payload = JSON.parse(await getText(url))
-  const results = Array.isArray(payload?.results) ? payload.results : []
+  // 宽窗口两路取样：一路按时间倒序拿最新的，一路按被引倒序拿窗口内绕不开的经典。
+  // 两路合并去重后交给 finalize 打分筛选，既不会只剩「昨天的论文」，
+  // 也不会把用户想看的近期工作挤掉（本地打分里时间和相关度都参与排序）。
+  // 代价是宽窗口多一次请求，所以只在真正回溯时才这么做。
+  const sorts = shouldSpread(lookbackDays)
+    ? ['publication_date:desc', 'cited_by_count:desc']
+    : ['publication_date:desc']
+  const works = []
+  const seenWorkIds = new Set()
+  for (const sort of sorts) {
+    const page = await fetchOpenAlexPage({ filter, perPage, sort, api })
+    for (const work of page) {
+      const key = String(work?.id ?? '')
+      if (key !== '') {
+        if (seenWorkIds.has(key)) continue
+        seenWorkIds.add(key)
+      }
+      works.push(work)
+    }
+  }
+  const results = works
   const items = results.map((work) => {
     const doi = String(work?.doi ?? '').replace(/^https?:\/\/doi\.org\//i, '')
     const authors = Array.isArray(work?.authorships)
@@ -861,10 +954,19 @@ const LOCAL_FILTER_SOURCES = new Set(['biorxiv', 'rss', 'crossref'])
 
 /**
  * 抓取一个源。
- * @param {{ source: string, topic: object, max: number, rss: string[], api?: object, lookbackDays?: number }} request
+ * `spread=true` 用于宽窗口回溯：把 max 条配额按年份摊开，避免全被最近几天占满。
+ * @param {{ source: string, topic: object, max: number, rss: string[], api?: object, lookbackDays?: number, spread?: boolean }} request
  * @returns {Promise<{ items: object[], errors: {source: string, message: string}[] }>}
  */
-export async function collectFromSource({ source, topic, max, rss, api, lookbackDays = 30 }) {
+export async function collectFromSource({
+  source,
+  topic,
+  max,
+  rss,
+  api,
+  lookbackDays = 30,
+  spread = false,
+}) {
   const errors = []
   const query = normalizeQuery(topic)
   const base = { source, max, api, lookbackDays }
@@ -903,5 +1005,5 @@ export async function collectFromSource({ source, topic, max, rss, api, lookback
     return { items: [], errors }
   }
 
-  return { items: finalize(items, query, max, LOCAL_FILTER_SOURCES.has(source)), errors }
+  return { items: finalize(items, query, max, LOCAL_FILTER_SOURCES.has(source), spread), errors }
 }

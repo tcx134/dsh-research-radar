@@ -271,6 +271,76 @@ test('topics upsert 落盘，settings 脱敏密码，item 可标已读', async (
   ctx.disposeAll()
 })
 
+test('GET /state 暴露解析深度档位，POST /settings 能改深度', async (t) => {
+  const dir = await tempDir(t)
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+
+  const first = await call(ctx, { url: '/api/dsh-research-radar/state' })
+  assert.equal(first.status, 200)
+  assert.equal(first.body.settings.scan.summaryDepth, 'standard')
+  assert.deepEqual(
+    first.body.summaryDepths.map((o) => o.key),
+    ['brief', 'standard', 'deep'],
+  )
+  assert.ok(first.body.summaryDepths[0].approxTokens < first.body.summaryDepths[2].approxTokens)
+
+  const saved = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/settings',
+    headers: { 'content-type': 'application/json' },
+    body: { settings: { scan: { summaryDepth: 'brief' } } },
+  })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.state.settings.scan.summaryDepth, 'brief')
+
+  // 非法档位不报错，退回默认档（面板传错值也不会把配置写坏）
+  const bogus = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/settings',
+    headers: { 'content-type': 'application/json' },
+    body: { settings: { scan: { summaryDepth: 'ultra' } } },
+  })
+  assert.equal(bogus.status, 200)
+  assert.equal(bogus.body.state.settings.scan.summaryDepth, 'standard')
+  ctx.disposeAll()
+})
+
+test('POST /scan 传 lookbackDays 时强制用该窗口（回溯检索）', async (t) => {
+  const dir = await tempDir(t)
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+  // 建一个只订 rss、且没配 feed 的方向：不发网络请求，只看编排结果
+  const created = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/topics',
+    headers: { 'content-type': 'application/json' },
+    body: { op: 'upsert', topic: { name: '回溯测试', keywords: ['metal rubber'], sources: ['rss'] } },
+  })
+  assert.equal(created.status, 200)
+
+  const scanned = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/scan',
+    headers: { 'content-type': 'application/json' },
+    body: { lookbackDays: 365 },
+  })
+  assert.equal(scanned.status, 200)
+  assert.equal(scanned.body.lookbackDays, 365)
+  assert.equal(scanned.body.summaryDepth, 'standard')
+
+  // 不传就用方向自己的增量窗口（刚扫过 → 收窄到 MIN_LOOKBACK_DAYS 附近）
+  const again = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/scan',
+    headers: { 'content-type': 'application/json' },
+    body: {},
+  })
+  assert.equal(again.status, 200)
+  assert.ok(again.body.lookbackDays < 365)
+  ctx.disposeAll()
+})
+
 test('topics upsert 缺名称时返回 400，未知接口返回 404', async (t) => {
   const dir = await tempDir(t)
   const ctx = makeCtx()

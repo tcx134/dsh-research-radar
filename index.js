@@ -1,9 +1,10 @@
 import { createStore } from './radar/store.js'
 import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays } from './radar/scan.js'
 import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
-import { SOURCE_LABELS, collectFromSource } from './radar/sources.js'
+import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
+import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
 
 export const name = 'dsh-research-radar'
 
@@ -168,6 +169,12 @@ export function apply(ctx, config) {
   async function publicState(query = {}) {
     const state = await store.load()
     const page = paginateItems(state.items, query)
+    // 增量窗口按方向算（radar/scan.js 里 lastScanAt 记在方向上）。面板只需要一个
+    // 代表性数字，取所有启用方向里最宽的那个 —— 也就是「这次最多往回看多少天」。
+    const enabledTopics = state.topics.filter((t) => t.enabled !== false)
+    const windows = enabledTopics.map((t) =>
+      effectiveLookbackDays(t.lastScanAt, state.settings.scan.lookbackDays),
+    )
     return {
       topics: state.topics,
       items: page.items,
@@ -179,6 +186,8 @@ export function apply(ctx, config) {
       },
       settings: { ...state.settings, mail: maskMailSettings(state.settings.mail) },
       sources: SOURCE_LABELS,
+      // 解析深度可选档位（面板设置页直接渲染成选择器，带每档的预算说明）
+      summaryDepths: summaryDepthOptions(),
       status: {
         scanning: scanRunning,
         lastError,
@@ -186,10 +195,8 @@ export function apply(ctx, config) {
         scanIntervalHours: state.settings.scan.intervalHours,
         // 下次扫描实际会用多大的窗口（增量窗口，见 radar/scan.js 的
         // effectiveLookbackDays）。面板把它显示出来，方便确认优化生效。
-        effectiveLookbackDays: effectiveLookbackDays(
-          state.settings.scan.lastScanAt,
-          state.settings.scan.lookbackDays,
-        ),
+        effectiveLookbackDays:
+          windows.length > 0 ? Math.max(...windows) : effectiveLookbackDays(null, state.settings.scan.lookbackDays),
       },
     }
   }
@@ -345,6 +352,8 @@ export function apply(ctx, config) {
                     languages,
                     enabled: payload.enabled !== false,
                     createdAt: new Date().toISOString(),
+                    // 空串 = 从没扫过 → 首次扫描用完整窗口（增量窗口见 radar/scan.js）
+                    lastScanAt: '',
                   })
                 } else {
                   existing.name = name
@@ -383,6 +392,10 @@ export function apply(ctx, config) {
                   state.settings.scan.lookbackDays = Math.min(3650, Math.max(1, Number(scan.lookbackDays)))
                 }
                 if (typeof scan.summarize === 'boolean') state.settings.scan.summarize = scan.summarize
+                // 解析深度决定每次摘要烧多少 token，非法值退回默认档
+                if (typeof scan.summaryDepth === 'string') {
+                  state.settings.scan.summaryDepth = normalizeSummaryDepth(scan.summaryDepth)
+                }
               }
               if (patch.api !== null && typeof patch.api === 'object') {
                 const api = patch.api
@@ -430,6 +443,8 @@ export function apply(ctx, config) {
             )
             const found = []
             const errors = []
+            // 大窗口试检索同样按年份摊开，否则「试检索」看到的和「回溯检索」看到的不是一回事
+            const spread = shouldSpread(lookbackDays)
             for (const source of sources) {
               const { items, errors: errs } = await collectFromSource({
                 source,
@@ -438,6 +453,7 @@ export function apply(ctx, config) {
                 rss: state.settings.rss,
                 api: state.settings.api,
                 lookbackDays,
+                spread,
               })
               found.push(...items)
               errors.push(...errs)
@@ -452,10 +468,18 @@ export function apply(ctx, config) {
 
           if (action === 'scan') {
             const topicIds = Array.isArray(body.topicIds) ? body.topicIds.map(String) : undefined
-            const result = await doScan({ reason: 'manual', topicIds })
+            // lookbackDays 传了就强制用这个窗口（回溯检索：忽略增量窗口，一次捞够）
+            const forced = Number(body.lookbackDays)
+            const lookbackDays =
+              Number.isFinite(forced) && forced > 0 ? Math.min(3650, Math.round(forced)) : undefined
+            const result = await doScan({ reason: 'manual', topicIds, lookbackDays })
             sendJson(res, 200, {
               ok: true,
               newCount: result.newItems.length,
+              // 本次实际使用的回溯窗口（增量抓取可能比配置值窄），面板会显示出来
+              lookbackDays: result.lookbackDays ?? null,
+              // 本次用的解析深度（brief / standard / deep），面板会显示出来
+              summaryDepth: result.summaryDepth ?? null,
               errors: result.errors,
               mail: result.mail,
               items: result.newItems,
@@ -550,7 +574,7 @@ export function apply(ctx, config) {
     ctx.tools.register({
       name: 'research_radar',
       description:
-        '研究前沿雷达：管理用户关注的研究方向，扫描并抓取最新论文，用 LLM 生成结构化摘要（方法/内容/创新点），可发送邮件摘要。研究方向支持多维度检索：keywords（标题/摘要关键词）、authors（作者）、venues（期刊）、institutions（单位）、exclude（排除词），不同维度之间是 AND。action 取值：status（查看配置与最新论文）、list_topics、add_topic（新增/更新方向）、remove_topic、scan（立即扫描）、send_digest（把已抓取内容发邮件）。',
+        '研究前沿雷达：管理用户关注的研究方向，扫描并抓取最新论文，用 LLM 生成结构化摘要（方法/内容/创新点），可发送邮件摘要。研究方向支持多维度检索：keywords（标题/摘要关键词）、authors（作者）、venues（期刊）、institutions（单位）、exclude（排除词），不同维度之间是 AND。action 取值：status（查看配置与最新论文）、list_topics、add_topic（新增/更新方向）、remove_topic、scan（立即扫描，可用 lookbackDays 回溯若干天、summaryDepth 控制解析深度省 token）、send_digest（把已抓取内容发邮件）。',
       parameters: {
         type: 'object',
         properties: {
@@ -581,6 +605,17 @@ export function apply(ctx, config) {
               'add_topic 时的语言过滤：zh（中文文献）/ en（英文文献）。留空或两项都传 = 不限语言',
           },
           topicId: { type: 'string', description: 'remove_topic 时的方向 id 或名称' },
+          lookbackDays: {
+            type: 'number',
+            description:
+              'scan 时强制使用的回溯窗口（天，1–3650）。不传则用增量窗口；想回溯捞老论文就传大一点（如 365 或 1095）',
+          },
+          summaryDepth: {
+            type: 'string',
+            enum: ['brief', 'standard', 'deep'],
+            description:
+              'scan 时的解析深度：brief（一句话+创新点，最省 token）/ standard / deep（全字段含局限）。不传用当前设置',
+          },
         },
         required: ['action'],
         additionalProperties: false,
@@ -665,6 +700,7 @@ export function apply(ctx, config) {
               languages,
               enabled: true,
               createdAt: new Date().toISOString(),
+              lastScanAt: '',
             })
             return state.topics
           })
@@ -679,10 +715,20 @@ export function apply(ctx, config) {
           return { ok: true, topics }
         }
         if (action === 'scan') {
-          const result = await doScan({ reason: 'agent' })
+          const forced = Number(args?.lookbackDays)
+          const lookbackDays =
+            Number.isFinite(forced) && forced > 0 ? Math.min(3650, Math.round(forced)) : undefined
+          const result = await doScan({
+            reason: 'agent',
+            lookbackDays,
+            summaryDepth: typeof args?.summaryDepth === 'string' ? args.summaryDepth : undefined,
+          })
           return {
             ok: true,
             newCount: result.newItems.length,
+            lookbackDays: result.lookbackDays ?? null,
+            // 本次用的解析深度（brief / standard / deep）
+            summaryDepth: result.summaryDepth ?? null,
             errors: result.errors,
             items: result.newItems.map((i) => ({
               title: i.title,
