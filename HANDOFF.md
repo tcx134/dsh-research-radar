@@ -759,21 +759,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 
 | 文件 | 改动 |
 | --- | --- |
-| `radar/dedupe.js` | **新增**（102 行）。`normalizeDoi` / `normalizeArxivId` / `normalizeTitle` / `normalizeYear` / `dedupeKeys` / `dedupeKey` / `isCanonicalKey` / `migrateSeenKey` |
-| `radar/config.js` | **新增**（108 行）。手写 Standard Schema v1：`dataDir` / `llmProvider` / `llmModel` / `locale` |
-| `radar/store.js` | `pruneSeen()` + `SEEN_MAX_AGE_DAYS=180` + `SEEN_MAX_ENTRIES=20000`；`normalizeItem` 加 `starred`；`normalizeTopic` 加 `languages`（`KNOWN_LANGUAGES=['zh','en']`，两项都选折成 `[]`）；`normalize()` 迁移旧 seen 键；`mutate()` 前自动剪枝 |
-| `radar/sources.js` | `pubmedDateRange()`；`fetchPubmed({query,max,lookbackDays=30})` 拼 `datetype=pdat&mindate&maxdate`；`normalizeQuery` 加 `languages`；`openAlexFilter` 拼 `language:zh|en`、`pubmedTerm` 拼 `(chi[la] OR eng[la])`；`detectLanguage()` + `isWrongLanguage()` 本地语言判定；`describeLanguages()`；`fetchBiorxiv` 支持 `lookbackDays`（原来写死 30 天）；`export { strongKeywords }`、`export { finalize, isExcluded }`（为可单测） |
-| `radar/scan.js` | `mapLimit()` + `SUMMARY_CONCURRENCY=3` + `summarizeOne()`；`selectFresh(candidates, seen)`；`effectiveLookbackDays()` + `MIN_LOOKBACK_DAYS=2`（增量窗口）；`resolvePanelUrl(ctx)`；邮件改 `digestToHtml`；locale 从 `config.locale` 读 |
-| `radar/stats.js` | **新增**（155 行）。`computeStats(items,{days,topicId,now,topLimit,sourceLabels})` / `weekStart()` / `DEFAULT_STATS_DAYS=90` / `MAX_STATS_DAYS=730` / `TOP_LIMIT=8` |
+| `radar/dedupe.js` | **新增**（125 行）。`normalizeDoi` / `normalizeArxivId` / `normalizeTitle` / `normalizeYear` / `dedupeKeys` / `dedupeKey` / `isCanonicalKey` / `migrateSeenKey` |
+| `radar/config.js` | **新增**（119 行）。手写 Standard Schema v1：`dataDir` / `llmProvider` / `llmModel` / `locale` |
+| `radar/store.js` | `pruneSeen()` + `SEEN_MAX_AGE_DAYS=180` + `SEEN_MAX_ENTRIES=20000`；`normalizeItem` 加 `starred`；`normalizeTopic` 加 `languages`（`KNOWN_LANGUAGES=['zh','en']`，两项都选折成 `[]`）与 `lastScanAt`；`normalize()` 迁移旧 seen 键、`summaryDepth` 归一；`mutate()` 前自动剪枝 |
+| `radar/sources.js` | `pubmedDateRange()`；`fetchPubmed({query,max,lookbackDays=30})` 拼 `datetype=pdat&mindate&maxdate`；`normalizeQuery` 加 `languages`；`openAlexFilter` 拼 `language:zh|en`、`pubmedTerm` 拼 `(chi[la] OR eng[la])`；`detectLanguage()` + `isWrongLanguage()` 本地语言判定；`describeLanguages()`；`fetchBiorxiv` 支持 `lookbackDays`（原来写死 30 天）；**`shouldSpread()`（`WIDE_WINDOW_DAYS=90`）+ `spreadByYear()` + `fetchOpenAlexPage()` 双路取样 + `finalize(...,spread)`**；`export { strongKeywords }`、`export { finalize, isExcluded }`（为可单测） |
+| `radar/summarize.js` | **`SUMMARY_DEPTHS=['brief','standard','deep']`** + `DEFAULT_SUMMARY_DEPTH='standard'`；`FIELD_SPECS` / `DEPTH_SPECS`（字段集 + `abstractChars` + `maxTokens`）；`normalizeSummaryDepth()` / `summaryDepthSpec()` / `summaryDepthOptions()` / `buildSystemPrompt(depth)`；`summarizePaper(...,depth)` 并把 `summary.depth` 写进结果 |
+| `radar/scan.js` | `mapLimit()` + `SUMMARY_CONCURRENCY=3` + `summarizeOne()`；`selectFresh(candidates, seen)`；`effectiveLookbackDays()` + `MIN_LOOKBACK_DAYS=2`（增量窗口，配置上限 3650 天）；`resolvePanelUrl(ctx)`；`spread: shouldSpread(topicLookback)`；`result.summaryDepth` / `result.lookbackDays`；邮件改 `digestToHtml`；locale 从 `config.locale` 读 |
+| `radar/stats.js` | **新增**（182 行）。`computeStats(items,{days,topicId,now,topLimit,sourceLabels})` / `weekStart()` / `DEFAULT_STATS_DAYS=90` / `MAX_STATS_DAYS=730` / `TOP_LIMIT=8` |
 | `radar/mail.js` | `MAIL_COLORS` / `FONT_STACK` / `escapeHtml` / `safeUrl` / `chipHtml` / `fieldRowHtml` / `paperCardHtml` / `digestToHtml(items,topics,{panelUrl,locale})`；`textToHtml` 保留作兜底 |
-| `index.js` | `import { Config, validateConfig }`、`export { Config }`；`paginateItems()` + `DEFAULT_ITEM_LIMIT=50` + `MAX_ITEM_LIMIT=500`；`publicState(query)` 返回 `page` / `counts`；`POST /item` 支持 `read`+`starred`；新增 `POST /mark-all-read`；新增 `GET /stats`；`preview-mail` 返回 `html`；`toLanguageList()` + topics/Agent 工具的 `languages` |
-| `client.js` | 筛选器（全部/未读/收藏 + 计数）、方向下拉、`loadMore()`、`patchItem()`、`markAllRead()`；`ItemCard({item,t,onToggleRead,onToggleStar,onDeepRead})`；**🔍 精读按钮** + `buildDeepReadPrompt(item,locale)` + `startAgentSession(prompt)`（模块级 `clientContext` 接 `apply(ctx)` 的 ctx，走 `uiWorkspace.startSession`）；第四个页签「趋势」（`RankList` + 周柱状图）；方向表单的「文献语言」复选框；新增 CSS `.drr-card-read` / `.drr-dot` / `.drr-chip-star` / `.drr-seg` / `.drr-more` / `.drr-stat*` / `.drr-chart*` / `.drr-list*` / `.drr-btn-deep`；DICT 加 35+ 个键 |
+| `index.js` | `import { Config, validateConfig }`、`export { Config }`；`paginateItems()` + `DEFAULT_ITEM_LIMIT=50` + `MAX_ITEM_LIMIT=500`；`publicState(query)` 返回 `page` / `counts` / `summaryDepths`，`status.effectiveLookbackDays` 取各方向最大值；`POST /item` 支持 `read`+`starred`；新增 `POST /mark-all-read`；新增 `GET /stats`；`POST /preview` 传 `spread`；`POST /scan` 支持 `lookbackDays` 强制窗口并回传 `summaryDepth`；`POST /settings` 的 `scan` 分支含 `summaryDepth` 与 1–3650 天窗口；`preview-mail` 返回 `html`；`toLanguageList()` + topics/Agent 工具的 `languages`、Agent 的 `lookbackDays`/`summaryDepth` |
+| `client.js` | 筛选器（全部/未读/收藏 + 计数）、方向下拉、`loadMore()`、`patchItem()`、`markAllRead()`；`ItemCard({item,t,onToggleRead,onToggleStar,onDeepRead})`；**🔍 精读按钮** + `buildDeepReadPrompt(item,locale)` + `startAgentSession(prompt)`（模块级 `clientContext` 接 `apply(ctx)` 的 ctx，走 `uiWorkspace.startSession`）；第四个页签「趋势」（`RankList` + 周柱状图）；方向表单的「文献语言」复选框；**设置页的常用时间范围预设（半年/1年/2年/3年）+ 回溯检索按钮 + 解析深度 seg**；扫描提示条报告「本次窗口 N 天 · 解析深度 X」；新增 CSS `.drr-card-read` / `.drr-dot` / `.drr-chip-star` / `.drr-seg` / `.drr-more` / `.drr-stat*` / `.drr-chart*` / `.drr-list*` / `.drr-btn-deep` / `.drr-presets*` / `.drr-hint-inline`；DICT 加 50+ 个键 |
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`；`scripts.test = "node --test test/*.test.js"` |
+| `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（152 个用例，全部通过）
+### 11.4 测试（173 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 152 / fail 0
+node --test test/*.test.js   →   pass 173 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -781,19 +783,20 @@ node --test test/*.test.js   →   pass 152 / fail 0
 | 文件 | 用例 | 覆盖 |
 | --- | --- | --- |
 | `test/dedupe.test.js` | 10 | 各种 DOI 前缀、arXiv 归一、中文标题不抹空、键顺序、`migrateSeenKey` |
-| `test/store.test.js` | 9 | 180 天边界、坏时间戳、`keepKeys` 永不删、条数截断、幂等、默认设置 |
-| `test/store-file.test.js` | 6 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退 |
+| `test/store.test.js` | 9 | 180 天边界、坏时间戳、`keepKeys` 永不删、条数截断、幂等、默认设置（含 `summaryDepth`） |
+| `test/store-file.test.js` | 8 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退、`summaryDepth` 补默认与非法值归一 |
 | `test/sources.test.js` | 13 | `normalizeQuery` 的 strong 判定、`scoreItem` 打分、`invertAbstract`、六源标签 |
-| `test/finalize.test.js` | 11 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期 |
+| `test/finalize.test.js` | 17 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期；`spreadByYear` 每年代表 / 年内排序 / 条数够用 / 脏数据、`finalize(spread=true)`、`shouldSpread` 90 天边界 |
 | `test/language.test.js` | 14 | `languages` 归一化、zh+en 折成 `[]`、`detectLanguage` 四种输入、`finalize` 的语言过滤与 strict 叠加、store 落盘 |
-| `test/scan.test.js` | 16 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例 + `runScan` 窗口透传/按方向收窄 4 例 |
+| `test/scan.test.js` | 19 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例 + `runScan` 窗口透传/按方向收窄 4 例；`summaryDepth` 默认/三档/非法值/`options` 覆盖 5 例 |
 | `test/select-fresh.test.js` | 8 | 跨源只留高分那条、跨方向、seen 的 DOI/标题键命中、脏候选 |
 | `test/paginate.test.js` | 10 | 分页、筛选、非法参数夹取（**含 `null` → 默认 50**）、`/item`、`/mark-all-read`、收藏落盘 |
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
 | `test/stats.test.js` | 11 | `weekStart` 归周一、窗口夹取（含 `null`→90）、补空周、榜单排序、坏/未来时间戳 |
 | `test/mail.test.js` | 10 | 无 `<style>` 无 `class=`、卡片边色、字段渲染、HTML 转义、挡 `javascript:`、中英文 |
-| `test/index.test.js` | 11 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、Agent 工具 |
-| `test/client-smoke.test.js` | 13 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、方向表单语言 3 例、英文环境 |
+| `test/index.test.js` | 13 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
+| `test/summarize.test.js` | 8 | 三档字段集、`abstractChars`/`maxTokens` 严格递增、`summaryDepthOptions`、`buildSystemPrompt` 只列当前档、`buildUserMessage` 按档截断、`summarizePaper` 精简档与深度档 |
+| `test/client-smoke.test.js` | 15 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境 |
 
 `test/helpers.js` 提供 `tempDir(t)` / `makeCtx()` / `call(ctx,req)` / `seedState(dir,state)`。
 
@@ -966,6 +969,7 @@ cd I:\skill\dsh-research-radar
    正确做法：`[System.IO.File]::WriteAllText($f, $msg, (New-Object System.Text.UTF8Encoding($false)))` 然后 `git commit -F $f`。
    提交后校验：`git log -1 --format=%s%n%b` 用 `execFileSync(..., {encoding:'utf8'})` 读回来，
    确认 0 个 U+FFFD 且含中文 —— 本轮验证通过（subject: `feat: 修完 P0/P1 缺陷并补 P2 能力，加 150 个单测`）。
+（后来用例数涨到 173，该 subject 是当时那次提交的历史记录，不用改。）
 
 提交结果：`71c6c20`（parent `35fa645`），29 文件、+5064 −212，`git status --porcelain` 干净。
 暂存区里没有任何 `tmp-*` / `.gui-index.html` / `.combo.js` / `*.bak` 残留（`.gitignore` 已覆盖）。
