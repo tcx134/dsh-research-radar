@@ -530,7 +530,7 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
   // 宽窗口两路取样：一路按时间倒序拿最新的，一路按被引倒序拿窗口内绕不开的经典。
   // 两路合并去重后交给 finalize 打分筛选，既不会只剩「昨天的论文」，
   // 也不会把用户想看的近期工作挤掉（本地打分里时间和相关度都参与排序）。
-  // 代价是宽窗口多一次请求，所以只在真正回溯时才这么做。
+  // 代价是宽窗口多一次请求，所以只在窗口 > 90 天时才这么做。
   const sorts = shouldSpread(lookbackDays)
     ? ['publication_date:desc', 'cited_by_count:desc']
     : ['publication_date:desc']
