@@ -1067,7 +1067,7 @@ cd I:\skill\dsh-research-radar
      既有「最新的」，也有「窗口内绕不开的高被引经典」。
   2. **`spreadByYear(items, max)`**：`finalize` 新增第 5 个参数 `spread`，为 true 时按年份分桶、
      年份从新到旧轮转取（同一年内按 相关度 → 被引 → 日期 排序），保证窗口内每年都有代表。
-     `collectFromSource` 新增 `spread` 透传，`scan.js` 里只在 `forcedLookback !== null`（回溯）时开。
+     `collectFromSource` 新增 `spread` 透传，`scan.js` 里按实际窗口 `shouldSpread(topicLookback)` 决定。
 - 实测效果（`perovskite solar cell`，max=8）：
   - `days=30 spread=false` → 8 条全 2026 年；
   - `days=1095 spread=false` → 8 条仍全 2026 年（bug 复现）；
