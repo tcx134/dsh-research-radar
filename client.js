@@ -77,7 +77,7 @@ window.__ModuleLoader__.load({
         depth_brief: '精简',
         depth_standard: '标准',
         depth_deep: '深度',
-        depth_hint: '精简 = 一句话 + 创新点 + 标签，token 最省；标准 = 六字段；深度 = 全字段含局限。只影响新扫描的论文，已有摘要不变。',
+        depth_hint: '精简 = 一句话 + 创新点 + 标签，token 最省；标准 = 七字段（无局限）；深度 = 八字段含局限。只影响新扫描的论文，已有摘要不变。',
         depth_cost: '每篇约',
         api_settings: '检索接口',
         api_mailto: '联系邮箱（OpenAlex / Crossref 推荐填写，可提高配额）',
@@ -228,7 +228,7 @@ window.__ModuleLoader__.load({
         depth_brief: 'Brief',
         depth_standard: 'Standard',
         depth_deep: 'Deep',
-        depth_hint: 'Brief = TL;DR + novelty + tags (cheapest); Standard = six fields; Deep = all fields incl. limitations. Applies to new scans only.',
+        depth_hint: 'Brief = TL;DR + novelty + tags (cheapest); Standard = seven fields (no limitations); Deep = all eight fields incl. limitations. Applies to new scans only.',
         depth_cost: 'per paper ~',
         api_settings: 'Query APIs',
         api_mailto: 'Contact email (recommended for OpenAlex / Crossref quotas)',
@@ -1072,9 +1072,19 @@ window.__ModuleLoader__.load({
               result.newCount > 0
                 ? `${options && options.backfill ? t('backfill_done') : t('scan_done')}：${result.newCount} ${t('new_items')}`
                 : `${options && options.backfill ? t('backfill_done') : t('scan_done')}：${t('no_new')}`
+            // 把「实际用了多大的窗口、什么解析深度」也报出来 —— 窗口被增量逻辑收窄时，
+            // 用户看到 0 篇新论文才不会以为坏了。
+            const facts = []
+            if (Number(result.lookbackDays) > 0) {
+              facts.push(`${t('scan_window')} ${result.lookbackDays} ${t('days_unit')}`)
+            }
+            if (typeof result.summaryDepth === 'string' && result.summaryDepth !== '') {
+              facts.push(`${t('summary_depth')} ${t(`depth_${result.summaryDepth}`)}`)
+            }
+            const meta = facts.length > 0 ? `（${facts.join(' · ')}）` : ''
             const errors = Array.isArray(result.errors) && result.errors.length > 0
             const detail = errors ? `\n${result.errors.map((e) => `${e.source}: ${e.message}`).join('\n')}` : ''
-            setNote({ kind: errors ? 'warn' : 'ok', text: head + detail })
+            setNote({ kind: errors ? 'warn' : 'ok', text: head + meta + detail })
           })
           .catch((error) => setNote({ kind: 'err', text: error.message }))
           .finally(() => setBusy(''))

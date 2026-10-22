@@ -793,6 +793,12 @@ test('「回溯检索」用当前窗口强制扫描，不被增量窗口收窄',
     const post = fetchStub.calls.find((c) => c.method === 'POST' && c.url.endsWith('/scan'))
     assert.ok(post, '回溯检索应该 POST /scan')
     assert.equal(post.body.lookbackDays, 730)
+
+    // 结果提示里要带上「实际窗口 + 解析深度」，否则窗口被增量收窄时用户会以为坏了
+    tree = await mount(mini, Panel)
+    const note = textOf(tree)
+    assert.ok(note.includes('本次窗口 730 天'), `提示里应报告实际窗口，实际：${note.slice(0, 200)}`)
+    assert.ok(note.includes('解析深度 标准'), '提示里应报告解析深度')
   } finally {
     fetchStub.restore()
   }

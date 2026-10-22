@@ -1066,8 +1066,12 @@ cd I:\skill\dsh-research-radar
 - `test/index.test.js`（13 例）：`/state` 暴露 `summaryDepths`、`POST /settings` 改深度生效、
   `POST /scan {lookbackDays:365}` 真的用 365 天窗口。
 - `test/client-smoke.test.js`（15 例）：点「1 年」→ `POST /settings` 的 `scan.lookbackDays===365`；
-  点「精简 · 1.9k」→ `scan.summaryDepth==='brief'`；点「2 年」+「回溯检索」→ `POST /scan` 的 `body.lookbackDays===730`。
+  点「精简 · 1.9k」→ `scan.summaryDepth==='brief'`；点「2 年」+「回溯检索」→ `POST /scan` 的 `body.lookbackDays===730`，
+  且结果提示里带「本次窗口 730 天 · 解析深度 标准」。
 - 合计 **167 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
+
+**面板上的即时反馈**：`runScan` 成功后的提示条会追加「（本次窗口 N 天 · 解析深度 标准）」。
+必须有这个 —— 日常扫描是增量的，窗口会被收窄成 3 天，用户看到「0 篇新论文」时不然会以为插件坏了。
 
 #### 11.12.4 本次踩的坑
 
