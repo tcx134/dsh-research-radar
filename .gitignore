@@ -6,6 +6,7 @@ dist/
 tmp-*/
 tmp-*.mjs
 tmp-*.js
+tmp-*.txt
 *.bak
 *.bak-*
 .gui-index.html

@@ -73,7 +73,7 @@ test('输入不是对象时安全返回空字典', () => {
 test('defaultSettings 的 scan 默认值没被改坏', () => {
   const d = defaultSettings()
   assert.equal(d.scan.intervalHours, 12)
-  assert.equal(d.scan.maxPerTopic, 8)
+  assert.equal(d.scan.maxPerTopic, 15)
   assert.equal(d.scan.lookbackDays, 30)
   assert.equal(d.scan.summarize, true)
   assert.equal(d.scan.summaryDepth, 'standard')

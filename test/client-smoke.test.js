@@ -626,6 +626,222 @@ test('趋势页在窗口内没有数据时给出空态提示', async () => {
   }
 })
 
+test('论文库页按年份分架渲染，标出老论文与计数', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const libraryBody = {
+    groupBy: 'year',
+    topicId: '',
+    total: 5,
+    groups: [
+      {
+        key: '2026',
+        label: '2026',
+        count: 2,
+        oldCount: 0,
+        unreadCount: 1,
+        items: [
+          {
+            id: 'openalex:W1',
+            title: 'Fresh metal rubber model',
+            authors: ['Li Y'],
+            authorCount: 1,
+            venue: 'Wear',
+            publishedAt: '2026-10-01',
+            url: 'https://example.org/1',
+            citations: 3,
+            read: false,
+            starred: false,
+            hasSummary: true,
+            summaryDepth: 'brief',
+            freshness: 'new',
+            ageDays: 21,
+          },
+          {
+            id: 'openalex:W2',
+            title: 'Another fresh one',
+            authors: ['Wang H'],
+            authorCount: 1,
+            venue: 'MSSP',
+            publishedAt: '2026-09-01',
+            url: 'https://example.org/2',
+            citations: 0,
+            read: true,
+            starred: false,
+            hasSummary: false,
+            summaryDepth: '',
+            freshness: 'new',
+            ageDays: 51,
+          },
+        ],
+      },
+      {
+        key: '2023',
+        label: '2023',
+        count: 3,
+        oldCount: 3,
+        unreadCount: 2,
+        items: [
+          {
+            id: 'openalex:W3',
+            title: 'Backfilled classic paper',
+            authors: ['Zhang Q'],
+            authorCount: 1,
+            venue: 'JSV',
+            publishedAt: '2023-04-01',
+            url: 'https://example.org/3',
+            citations: 1398,
+            read: false,
+            starred: true,
+            hasSummary: false,
+            summaryDepth: '',
+            freshness: 'old',
+            ageDays: 1300,
+          },
+        ],
+      },
+    ],
+    summary: {
+      oldestYear: '2023',
+      newestYear: '2026',
+      oldCount: 3,
+      newCount: 2,
+      unreadCount: 3,
+      starredCount: 1,
+      summarizedCount: 2,
+    },
+  }
+  const fetchStub = installFetch((url) => ({
+    body: url.includes('/library') ? libraryBody : sampleState(),
+  }))
+  try {
+    let tree = await mount(mini, Panel)
+    const libTab = buttonByText(tree, '论文库')
+    assert.ok(libTab, '应该渲染出「论文库」标签页')
+    libTab.props.onClick()
+    tree = await mount(mini, Panel)
+
+    const libCalls = fetchStub.calls.filter((c) => c.url.includes('/library'))
+    assert.equal(libCalls.length, 1, '打开论文库应该拉一次 /library')
+    assert.match(libCalls[0].url, /groupBy=year/)
+
+    const text = textOf(tree)
+    // 两个年份架都在，老论文架有角标
+    assert.match(text, /2026/)
+    assert.match(text, /2023/)
+    assert.match(text, /Backfilled classic paper/)
+    assert.match(text, /Fresh metal rubber model/)
+    // 顶部数字卡：总数 5、覆盖年份 2023–2026、老论文 3
+    assert.match(text, /5\s*库内论文/)
+    assert.match(text, /2023–2026\s*覆盖年份/)
+    assert.match(text, /3\s*老论文/)
+    // 每架有篇数与「老论文 N」角标
+    assert.match(text, /3\s*篇/)
+    assert.match(text, /老论文\s*3/)
+    // 引文数写出来了
+    assert.match(text, /引 1398/)
+    // 架子元素真的画出来了
+    const shelves = findAll(tree, (el) => el.props && el.props.className === 'drr-shelf')
+    assert.equal(shelves.length, 2)
+    // 老论文行有 old 角标
+    const marks = findAll(tree, (el) => el.props && String(el.props.className || '').includes('drr-book-mark-old'))
+    assert.ok(marks.length >= 1, '老论文应该有 old 角标')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('论文库可以切到按方向分架，并在空库时给提示', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const topicLib = {
+    groupBy: 'topic',
+    topicId: '',
+    total: 1,
+    groups: [
+      {
+        key: 't-a',
+        label: '金属橡胶',
+        count: 1,
+        oldCount: 0,
+        unreadCount: 1,
+        items: [
+          {
+            id: 'openalex:W9',
+            title: 'Topic shelf paper',
+            authors: [],
+            authorCount: 0,
+            venue: 'Wear',
+            publishedAt: '2026-10-10',
+            url: 'https://example.org/9',
+            citations: 0,
+            read: false,
+            starred: false,
+            hasSummary: true,
+            summaryDepth: 'standard',
+            freshness: 'new',
+            ageDays: 12,
+          },
+        ],
+      },
+    ],
+    summary: {
+      oldestYear: '2026',
+      newestYear: '2026',
+      oldCount: 0,
+      newCount: 1,
+      unreadCount: 1,
+      starredCount: 0,
+      summarizedCount: 1,
+    },
+  }
+  const emptyLib = {
+    groupBy: 'year',
+    topicId: '',
+    total: 0,
+    groups: [],
+    summary: {
+      oldestYear: '',
+      newestYear: '',
+      oldCount: 0,
+      newCount: 0,
+      unreadCount: 0,
+      starredCount: 0,
+      summarizedCount: 0,
+    },
+  }
+  let useEmpty = false
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/library')) {
+      return { body: useEmpty ? emptyLib : url.includes('groupBy=topic') ? topicLib : topicLib }
+    }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '论文库').props.onClick()
+    tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /Topic shelf paper/)
+    assert.match(textOf(tree), /金属橡胶/)
+
+    // 切「按方向」应该重新拉一次带 groupBy=topic
+    const before = fetchStub.calls.filter((c) => c.url.includes('/library')).length
+    buttonByText(tree, '按方向').props.onClick()
+    tree = await mount(mini, Panel)
+    const after = fetchStub.calls.filter((c) => c.url.includes('/library'))
+    assert.equal(after.length, before + 1)
+    assert.match(after[after.length - 1].url, /groupBy=topic/)
+
+    // 空库给提示
+    useEmpty = true
+    buttonByText(tree, '按年份').props.onClick()
+    tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /论文库还是空的/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
 test('方向表单能勾选文献语言，并随 upsert 一起提交', async () => {
   const mini = makeReact()
   const { Panel } = await loadClient(mini.React)

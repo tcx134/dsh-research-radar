@@ -172,3 +172,39 @@ test('落盘的 summaryDepth 非法值会被归一成默认档', async (t) => {
   const state = await store.load()
   assert.equal(state.settings.scan.summaryDepth, 'standard')
 })
+
+async function storeWithMaxPerTopic(t, value) {
+  const dir = await tempDir(t)
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [],
+      items: [],
+      seen: {},
+      settings: { scan: value === undefined ? {} : { maxPerTopic: value } },
+    }),
+    'utf8',
+  )
+  return createStore({}, { dataDir: dir }).load()
+}
+
+test('老默认值 maxPerTopic=8 会被迁移成新的 15', async (t) => {
+  // 老用户的 state.json 里存着显式的 8，只改 defaultSettings 对他们无效
+  const state = await storeWithMaxPerTopic(t, 8)
+  assert.equal(state.settings.scan.maxPerTopic, 15)
+})
+
+test('用户手动设的 maxPerTopic 一律尊重，不被迁移覆盖', async (t) => {
+  for (const value of [3, 20, 40, 50]) {
+    const state = await storeWithMaxPerTopic(t, value)
+    assert.equal(state.settings.scan.maxPerTopic, value, `maxPerTopic=${value} 不该被改`)
+  }
+})
+
+test('maxPerTopic 缺省、脏值、超上限都会被夹到合法范围', async (t) => {
+  assert.equal((await storeWithMaxPerTopic(t, undefined)).settings.scan.maxPerTopic, 15)
+  assert.equal((await storeWithMaxPerTopic(t, 'abc')).settings.scan.maxPerTopic, 15)
+  assert.equal((await storeWithMaxPerTopic(t, 999)).settings.scan.maxPerTopic, 50)
+  assert.equal((await storeWithMaxPerTopic(t, 0)).settings.scan.maxPerTopic, 1)
+})

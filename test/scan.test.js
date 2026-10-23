@@ -115,15 +115,18 @@ test('effectiveLookbackDays 没有上次扫描记录时用配置值', () => {
   assert.equal(effectiveLookbackDays('not-a-date', 30, NOW), 30)
 })
 
-test('effectiveLookbackDays 刚扫过 1 小时 → 窗口收窄到 3 天', () => {
-  // 1 小时前扫过：ceil(1/24)=1，1+2=3，但不超过配置的 30 → 3
-  assert.equal(effectiveLookbackDays(iso(3600e3), 30, NOW), 3)
-  // 配置本身就很小（3 天）时不能再放大
+test('effectiveLookbackDays 刚扫过也不低于 30 天下限', () => {
+  // 下限是 30 天（收录延迟），不是 2 天：1 小时前扫过也给 30 天，
+  // 否则出版日期在 10-20、10-25 才进索引的论文会被永久漏掉。
+  assert.equal(effectiveLookbackDays(iso(3600e3), 30, NOW), 30)
   assert.equal(effectiveLookbackDays(iso(3600e3), 3, NOW), 3)
+  // 配置比下限还小时，尊重配置（用户明确只要 3 天）
+  assert.equal(effectiveLookbackDays(iso(3600e3), 10, NOW), 10)
 })
 
-test('effectiveLookbackDays 隔了 10 天 → 12 天窗口', () => {
-  assert.equal(effectiveLookbackDays(iso(10 * 86400e3), 30, NOW), 12)
+test('effectiveLookbackDays 隔了 10 天 → 40 天窗口（10 + 30 下限）', () => {
+  assert.equal(effectiveLookbackDays(iso(10 * 86400e3), 30, NOW), 30)
+  assert.equal(effectiveLookbackDays(iso(10 * 86400e3), 365, NOW), 40)
 })
 
 test('effectiveLookbackDays 隔了很久或时间戳在未来时退回配置值', () => {
@@ -135,9 +138,9 @@ test('effectiveLookbackDays 隔了很久或时间戳在未来时退回配置值'
 test('effectiveLookbackDays 对非法配置值有兜底', () => {
   assert.equal(effectiveLookbackDays(iso(3600e3), 0, NOW), 1)
   assert.equal(effectiveLookbackDays(iso(3600e3), -5, NOW), 1)
-  assert.equal(effectiveLookbackDays(iso(3600e3), 999, NOW), 3)
-  assert.equal(effectiveLookbackDays(iso(3600e3), 'abc', NOW), 3)
-  assert.equal(effectiveLookbackDays(iso(3600e3), null, NOW), 3)
+  assert.equal(effectiveLookbackDays(iso(3600e3), 999, NOW), 31)
+  assert.equal(effectiveLookbackDays(iso(3600e3), 'abc', NOW), 30)
+  assert.equal(effectiveLookbackDays(iso(3600e3), null, NOW), 30)
 })
 
 /**
@@ -179,7 +182,7 @@ test('runScan 把增量窗口传给抓取层，并记在 result 上', async (t) 
   assert.equal(result.newItems.length, 0)
 })
 
-test('runScan 不传 lookbackDays 时按方向自己的上次扫描时间自动收窄', async (t) => {
+test('runScan 不传 lookbackDays 时按方向自己的上次扫描时间算窗口', async (t) => {
   const recent = new Date(Date.now() - 2 * 3600e3).toISOString()
   const { store } = await storeWithTopic(t, {
     topic: { lastScanAt: recent },
@@ -196,9 +199,8 @@ test('runScan 不传 lookbackDays 时按方向自己的上次扫描时间自动�
     },
   })
   const result = await runScan({}, {}, store, {})
-  // 2 小时前扫过 → ceil(2/24)=1 → 1+2=3 天
-  assert.equal(result.lookbackDays, 3)
-  assert.ok(result.lookbackDays < 30)
+  // 2 小时前扫过 → ceil(2/24)=1 → 1+30(下限)=31，但不超过配置的 30 → 30
+  assert.equal(result.lookbackDays, 30)
 })
 
 test('新方向首次扫描用完整窗口，不被全局 lastScanAt 收窄', async (t) => {

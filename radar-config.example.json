@@ -23,6 +23,7 @@
       "intervalHours": 12,
       "maxPerTopic": 6,
       "summarize": true,
+      "summaryDepth": "standard",
       "lookbackDays": 30,
       "lastScanAt": null,
       "lastScanNew": 0

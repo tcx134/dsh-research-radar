@@ -4,6 +4,7 @@ import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
+import { buildLibrary } from './radar/library.js'
 import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
 
 export const name = 'dsh-research-radar'
@@ -292,6 +293,23 @@ export function apply(ctx, config) {
             return
           }
 
+          // 论文库（书架）：把检索到的全部论文按发表年份 / 方向分架。
+          // 和 /state 的区别是它不按发现时间分页，而是回答「我手上都有哪些、哪些是老论文」。
+          if (method === 'GET' && action === 'library') {
+            const state = await store.load()
+            const names = new Map(state.topics.map((t) => [t.id, t.name]))
+            sendJson(
+              res,
+              200,
+              buildLibrary(state.items, {
+                groupBy: url.searchParams.get('groupBy') === 'topic' ? 'topic' : 'year',
+                topicId: url.searchParams.get('topicId') ?? '',
+                topicLabel: (id) => names.get(id) ?? '',
+              }),
+            )
+            return
+          }
+
           if (method !== 'POST') {
             sendJson(res, 405, { error: 'method not allowed' })
             return
@@ -386,7 +404,7 @@ export function apply(ctx, config) {
                   state.settings.scan.intervalHours = Math.min(168, Math.max(1, Number(scan.intervalHours)))
                 }
                 if (Number.isFinite(Number(scan.maxPerTopic))) {
-                  state.settings.scan.maxPerTopic = Math.min(30, Math.max(1, Number(scan.maxPerTopic)))
+                  state.settings.scan.maxPerTopic = Math.min(50, Math.max(1, Number(scan.maxPerTopic)))
                 }
                 if (Number.isFinite(Number(scan.lookbackDays))) {
                   state.settings.scan.lookbackDays = Math.min(3650, Math.max(1, Number(scan.lookbackDays)))
