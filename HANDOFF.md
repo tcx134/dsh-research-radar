@@ -56,14 +56,15 @@
 - ✅ **已读 / 收藏 + 三段筛选 + 分页「加载更多」**
 - ✅ **邮件 HTML 卡片化**（table + 内联样式 + 「在面板中查看」带令牌按钮）
 - ✅ **`Config` schema**（`dataDir` / `llmProvider` / `llmModel` / `locale`）
-- ✅ **增量抓取窗口**（只往回看「距上次扫描天数 + 2 天」，省 OpenAlex 配额）
+- ✅ **增量抓取窗口**（只往回看「距上次扫描天数 + 30 天」，下限 30 天以兜住延迟收录，省 OpenAlex 配额）
 - ✅ **趋势统计**（第四个页签：周柱状图 + 来源 / 期刊 / 作者 / 标签榜单）
 - ✅ **中文文献**（方向里勾「中文文献」，OpenAlex / PubMed 服务端过滤，其余源本地判定）
 - ✅ **Agent 精读联动**（卡片上的 🔍 精读：把论文丢进新会话让 Agent 读全文，不自动发送）
 - ✅ **解析深度分档**（精简 / 标准 / 深度，同时收窄喂进去的摘要与输出上限，约 1.9k / 5k / 7.6k tokens 每篇）
 - ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
   「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
-- ✅ **189 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **连字符变体折叠 + Crossref 改相关度排序 + 窗口下限 30 天**（2026-10-23 修掉「检索得太少」的三个根因，见 11.14）
+- ✅ **193 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -92,13 +93,13 @@ I:\skill\dsh-research-radar\
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
 │   ├── store.js    371 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
-│   ├── sources.js 1010 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开
+│   ├── sources.js 1034 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开 + 连字符折叠
 │   ├── summarize.js 256 行 LLM 结构化摘要（三档解析深度）
 │   ├── mail.js     544 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
-│   ├── scan.js     407 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
+│   ├── scan.js     419 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 │   └── library.js  156 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
-├── test/                 16 个文件 / 189 个用例（node:test，零依赖）
+├── test/                 16 个文件 / 193 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -334,7 +335,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，189 个用例，~1s）
+# 0. 单测（最快，193 个用例，~1s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -502,13 +503,13 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ### P3 —— 工程化
 
 **13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**189 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+`node --test test/*.test.js`，**193 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、HTTP 路由、
 Config schema、趋势统计、论文库分架、邮件 HTML、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 189 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 193 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -523,12 +524,25 @@ Config schema、趋势统计、论文库分架、邮件 HTML、客户端面板�
 1. 读 `README.md`（面向用户）→ 读本文件第四节（环境约束）
 2. 跑第五节的语法检查 + `/state` 端点，确认插件还活着
 3. 用 bcdp 打开 token URL，确认面板五个 tab 都能渲染
-4. **跑一遍单测**：`node --test test/*.test.js`，应该是 189 pass / 0 fail
+4. **跑一遍单测**：`node --test test/*.test.js`，应该是 193 pass / 0 fail
    （在 DSH 沙箱里跑要加 `--experimental-test-isolation=none`，否则 `spawn EPERM`，见第七节 P3 第 13 条）
 5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；解析深度与时间范围两项见 11.12，
-   论文库书架见 11.13
+   论文库书架见 11.13，「检索得太少」的三个根因见 11.14
 6. 每改完一个文件 `node --check`，改完 Host 侧热重载，改完 Client 侧刷新页面验证
 7. 提交前确认没有把 `tmp-*`、`*.bak` 之类带进去
+
+### 判断「检索结果太少」的正确姿势（2026-10-23 血泪）
+
+用户说「检索得太少」时，**不要第一反应去放宽 strict**。按这个顺序量：
+
+1. **逐源直抓**：`collectFromSource({source, topic, max:30, lookbackDays:365})` 看每个源各出几条。
+   某一个源 0 条而 OpenAlex 有 30 条，问题就在那个源，不在 strict。
+2. **对比 strict 前后**：同一批候选跑 `finalize(items, query, max, false)` 与 `finalize(items, query, max, false, false)`
+   加个 `strict:false` 的 query，看 strict 到底丢了多少。实测它只丢 20%（50→40），不是主因。
+3. **看窗口**：`effectiveLookbackDays()` 算出来几天，再用那个天数直抓一次。窗口 3 天时命中 0 条是正常的。
+4. **看字面匹配率**：把返回的标题拿去和关键词做归一化比对，看有多少是「写法变体」被漏掉的
+   （实测 26% 是 `metal-rubber` / `metal–rubber`）。
+5. 最后才动 strict 或配额。
 
 ### 不要做的事
 
@@ -764,10 +778,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | --- | --- |
 | `radar/dedupe.js` | **新增**（125 行）。`normalizeDoi` / `normalizeArxivId` / `normalizeTitle` / `normalizeYear` / `dedupeKeys` / `dedupeKey` / `isCanonicalKey` / `migrateSeenKey` |
 | `radar/config.js` | **新增**（119 行）。手写 Standard Schema v1：`dataDir` / `llmProvider` / `llmModel` / `locale` |
-| `radar/store.js` | `pruneSeen()` + `SEEN_MAX_AGE_DAYS=180` + `SEEN_MAX_ENTRIES=20000`；`normalizeItem` 加 `starred`；`normalizeTopic` 加 `languages`（`KNOWN_LANGUAGES=['zh','en']`，两项都选折成 `[]`）与 `lastScanAt`；`normalize()` 迁移旧 seen 键、`summaryDepth` 归一；`mutate()` 前自动剪枝 |
-| `radar/sources.js` | `pubmedDateRange()`；`fetchPubmed({query,max,lookbackDays=30})` 拼 `datetype=pdat&mindate&maxdate`；`normalizeQuery` 加 `languages`；`openAlexFilter` 拼 `language:zh|en`、`pubmedTerm` 拼 `(chi[la] OR eng[la])`；`detectLanguage()` + `isWrongLanguage()` 本地语言判定；`describeLanguages()`；`fetchBiorxiv` 支持 `lookbackDays`（原来写死 30 天）；**`shouldSpread()`（`WIDE_WINDOW_DAYS=90`）+ `spreadByYear()` + `fetchOpenAlexPage()` 双路取样 + `finalize(...,spread)`**；`export { strongKeywords }`、`export { finalize, isExcluded }`（为可单测） |
+| `radar/store.js` | `pruneSeen()` + `SEEN_MAX_AGE_DAYS=180` + `SEEN_MAX_ENTRIES=20000`；`normalizeItem` 加 `starred`；`normalizeTopic` 加 `languages`（`KNOWN_LANGUAGES=['zh','en']`，两项都选折成 `[]`）与 `lastScanAt`；`normalize()` 迁移旧 seen 键、`summaryDepth` 归一；`mutate()` 前自动剪枝；**`maxPerTopic` 默认 8 → 15、上限 30 → 50** |
+| `radar/sources.js` | `pubmedDateRange()`；`fetchPubmed({query,max,lookbackDays=30})` 拼 `datetype=pdat&mindate&maxdate`；`normalizeQuery` 加 `languages`；`openAlexFilter` 拼 `language:zh|en`、`pubmedTerm` 拼 `(chi[la] OR eng[la])`；`detectLanguage()` + `isWrongLanguage()` 本地语言判定；`describeLanguages()`；`fetchBiorxiv` 支持 `lookbackDays`（原来写死 30 天）；**`shouldSpread()`（`WIDE_WINDOW_DAYS=90`）+ `spreadByYear()` + `fetchOpenAlexPage()` 双路取样 + `finalize(...,spread)`**；**`foldText()`（连字符 / 下划线 / 斜杠折成空格）+ `includesPhrase()` 走折叠**（修掉 `metal-rubber` 假阴性）；**`fetchCrossref` 去掉 `sort=published` 改走相关度排序**（修掉 80 条里 0 条相关）；`export { strongKeywords }`、`export { finalize, isExcluded }`（为可单测） |
 | `radar/summarize.js` | **`SUMMARY_DEPTHS=['brief','standard','deep']`** + `DEFAULT_SUMMARY_DEPTH='standard'`；`FIELD_SPECS` / `DEPTH_SPECS`（字段集 + `abstractChars` + `maxTokens`）；`normalizeSummaryDepth()` / `summaryDepthSpec()` / `summaryDepthOptions()` / `buildSystemPrompt(depth)`；`summarizePaper(...,depth)` 并把 `summary.depth` 写进结果 |
-| `radar/scan.js` | `mapLimit()` + `SUMMARY_CONCURRENCY=3` + `summarizeOne()`；`selectFresh(candidates, seen)`；`effectiveLookbackDays()` + `MIN_LOOKBACK_DAYS=2`（增量窗口，配置上限 3650 天）；`resolvePanelUrl(ctx)`；`spread: shouldSpread(topicLookback)`；`result.summaryDepth` / `result.lookbackDays`；邮件改 `digestToHtml`；locale 从 `config.locale` 读 |
+| `radar/scan.js` | `mapLimit()` + `SUMMARY_CONCURRENCY=3` + `summarizeOne()`；`selectFresh(candidates, seen)`；`effectiveLookbackDays()` + `MIN_LOOKBACK_DAYS=30`（增量窗口下限，配置上限 3650 天；30 天是为了兜住「出版日期几天前、今天才进索引」的延迟收录）；`resolvePanelUrl(ctx)`；`spread: shouldSpread(topicLookback)`；`result.summaryDepth` / `result.lookbackDays`；邮件改 `digestToHtml`；locale 从 `config.locale` 读 |
 | `radar/stats.js` | **新增**（182 行）。`computeStats(items,{days,topicId,now,topLimit,sourceLabels})` / `weekStart()` / `DEFAULT_STATS_DAYS=90` / `MAX_STATS_DAYS=730` / `TOP_LIMIT=8` |
 | `radar/library.js` | **新增**（156 行）。`yearOf()` / `freshnessOf(item,now)`（90 天新 / 365 天内近期 / 超过一年老 / 无日期 unknown，未来日期算新）/ `buildLibrary(items,{groupBy,topicId,now,topicLabel})`；架内排序 `publishedAt` → `citations` → `discoveredAt`；行只带精简字段（`hasSummary` / `summaryDepth` / `ageDays` / `freshness`），不带宽摘要 |
 | `radar/mail.js` | `MAIL_COLORS` / `FONT_STACK` / `escapeHtml` / `safeUrl` / `chipHtml` / `fieldRowHtml` / `paperCardHtml` / `digestToHtml(items,topics,{panelUrl,locale})`；`textToHtml` 保留作兜底 |
@@ -776,10 +790,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（189 个用例，全部通过）
+### 11.4 测试（193 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 189 / fail 0
+node --test test/*.test.js   →   pass 193 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -790,9 +804,9 @@ node --test test/*.test.js   →   pass 189 / fail 0
 | `test/store.test.js` | 9 | 180 天边界、坏时间戳、`keepKeys` 永不删、条数截断、幂等、默认设置（含 `summaryDepth`） |
 | `test/store-file.test.js` | 8 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退、`summaryDepth` 补默认与非法值归一 |
 | `test/sources.test.js` | 13 | `normalizeQuery` 的 strong 判定、`scoreItem` 打分、`invertAbstract`、六源标签 |
-| `test/finalize.test.js` | 17 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期；`spreadByYear` 每年代表 / 年内排序 / 条数够用 / 脏数据、`finalize(spread=true)`、`shouldSpread` 90 天边界 |
+| `test/finalize.test.js` | 21 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期；`spreadByYear` 每年代表 / 年内排序 / 条数够用 / 脏数据、`finalize(spread=true)`、`shouldSpread` 90 天边界；**连字符变体折叠 4 例**（标题四种写法、摘要变体、不放过 `MR Imaging`、排除词折叠） |
 | `test/language.test.js` | 14 | `languages` 归一化、zh+en 折成 `[]`、`detectLanguage` 四种输入、`finalize` 的语言过滤与 strict 叠加、store 落盘 |
-| `test/scan.test.js` | 19 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例 + `runScan` 窗口透传/按方向收窄 4 例；`summaryDepth` 默认/三档/非法值/`options` 覆盖 5 例 |
+| `test/scan.test.js` | 19 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例（**含 30 天下限**）+ `runScan` 窗口透传/按方向收窄 4 例；`summaryDepth` 默认/三档/非法值/`options` 覆盖 5 例 |
 | `test/select-fresh.test.js` | 8 | 跨源只留高分那条、跨方向、seen 的 DOI/标题键命中、脏候选 |
 | `test/paginate.test.js` | 10 | 分页、筛选、非法参数夹取（**含 `null` → 默认 50**）、`/item`、`/mark-all-read`、收藏落盘 |
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
@@ -934,6 +948,11 @@ async function readObject(sha) {
      也可以加「只看老论文 / 只看未读」的书架内筛选，或者按 `venue` / 作者分架。
    - **书架容量 1000 是拍的**（11.13）。真实用量攒上来之后要看一眼 `state.json` 大小；
      如果超过十几 MB，就改成「把摘要单独存一个 `summaries.json`、`state.json` 只存索引」。
+   - **bioRxiv 单源 63.8 秒**（11.14）。它每次拉整个时间窗口的 feed 再本地过滤，是六源里最慢的；
+     已经夹到 `Math.min(days, 180)` 但还不够，应该单独加超时 / 本地缓存，或者默认不勾这个源。
+   - **Crossref 的 `query.bibliographic` 是全文模糊匹配**（11.14）。改走相关度排序后 `max=8` 能出 8 条，
+     但 `total-results=158717` 说明服务端几乎没过滤；如果还想提高质量，可以试
+     `query.title` 而不是 `query.bibliographic`（未验证）。
 8. ~~**git**~~ ✅ 已补上。本轮从 npmmirror 下了 MinGit 2.56.0 解压到
    `C:\Users\<user>\.dsh\tools\mingit\`，并完成一次本地提交 `71c6c20`（29 文件 / +5064 −212）。
    细节见 11.10。仍然**没有 remote**（用户决策：只做本地提交，不推 GitHub）。
@@ -1109,7 +1128,7 @@ cd I:\skill\dsh-research-radar
 - `test/finalize.test.js`（17 例，新增 6 例）：`spreadByYear` 每年都有代表、年份内按 相关度→被引→日期 排序、
   条数够用时原样返回、脏数据安全、`finalize(..., spread=true)` 能把 2023 年的老论文带出来而 `spread=false` 不能、
   `shouldSpread` 的 90 天边界与脏值。
-- 合计 **189 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
+- 合计 **193 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 1s）。
 
 **面板上的即时反馈**：`runScan` 成功后的提示条会追加「（本次窗口 N 天 · 解析深度 标准）」。
 必须有这个 —— 日常扫描是增量的，窗口会被收窄成 3 天，用户看到「0 篇新论文」时不然会以为插件坏了。
@@ -1181,7 +1200,7 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
   但 `hasSummary=true`、`groupBy=topic` 时 `label` 是中文方向名、`topicId=t-zzz` 返回空。
 - `test/client-smoke.test.js` 新增 2 例（共 17）：论文库页按年份分架渲染（数字卡、两架、引文数、`.drr-shelf` 两个、
   old 角标存在）、切「按方向」会重新拉带 `groupBy=topic` 的请求 + 空库提示。
-- 全量：`node --test --experimental-test-isolation=none test/*.test.js` → **189 pass / 0 fail / ~1.1s**。
+- 全量：`node --test --experimental-test-isolation=none test/*.test.js` → **193 pass / 0 fail / ~1.1s**。
 - 真实 `state.json`（11 篇）实测：`oldestYear=2023`、`newestYear=2026`、`oldCount=6`、`newCount=5`；
   架分布 `2026:5` / `2025:2` / `2024:2` / `2023:2`；`groupBy=topic` → `金属橡胶(11)`。
 
@@ -1194,5 +1213,85 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
    （`hasSummary` / `summaryDepth` / `ageDays` / `freshness` 代替原始 `summary`），单行约 300B。
 3. **未来日期**。`freshnessOf` 一开始用 `Math.floor((now - at) / 86400000)` 直接比阈值，
    在线优先发表（日期在未来）会算出负数 → 落进 `recent`。补了 `if (days < 0) return 'new'`。
+
+
+### 11.14 「检索得太少」——三个假阴性与一处窗口设置（2026-10-23）
+
+用户反馈（m03986）：「感觉检索得太少了，这个检索条件是不是太严格」。查下来**不是 strict 太严**，
+而是三条独立的漏检路径，每条都单独造成大量假阴性。
+
+#### 11.14.1 诊断数据（全部实测，方向「金属橡胶」keywords=`['metal rubber','MR','EMWM']`）
+
+| 探针 | 结果 |
+| --- | --- |
+| 逐源直抓（`max:30`，窗口 365 天） | openalex **30** / crossref **0** / pubmed **0** / arxiv **0** / biorxiv **0**（且 biorxiv 耗时 **63.8 秒**） |
+| 日常窗口实际命中（openalex） | 3 天 → **0** 条、7 天 → **0** 条、14 天 → **0** 条、30 天 → **4** 条 |
+| strict 前后对比（openalex，窗口 90 天） | strict **14** / 非 strict **20** |
+| strict 前后对比（窗口 365 天） | strict **40** / 非 strict **50** |
+| OpenAlex 服务端真实命中量 | `"metal rubber"` 一年 **63**、五年 **297**；`金属橡胶` 一年 **2**；`"EMWM"` 五年 **39**；`"MR"` 五年 **152654**（不可用） |
+| OpenAlex 返回的 50 条候选 | 字面匹配 `metal rubber` **31** 条；归一化连字符后**新增 13 条（26%）**；50 条里 **28 条（56%）无摘要** |
+| Crossref 取回 80 条（`sort=published`） | 标题真含 metal rubber **0** 条 |
+| Crossref 取回 80 条（默认相关度排序） | 标题真含 metal rubber **34** 条；`rows=200` 时 **69** 条 |
+
+#### 11.14.2 三个修复
+
+1. **连字符变体折叠**（`radar/sources.js`）。新增私有 `foldText(value)`：
+   `String(value ?? '').toLowerCase().replace(/[\u2010-\u2015\u2212_/-]+/g, ' ').replace(/\s+/g, ' ').trim()`，
+   把 hyphen / en dash / em dash / minus / 下划线 / 斜杠统一折成空格。`includesPhrase()` 改成
+   `const needle = foldText(phrase); return haystack.includes(needle)`；`scoreItem()` 的四个 haystack
+   （标题 / 摘要 / 期刊 / 作者）都先 `foldText` 一次（**每篇只折一次**，否则 6000 字摘要会按关键词数重复折叠）；
+   `isExcluded()` 同样走折叠。
+   - 收益：窗口 90 天 strict **14 → 19** 条；365 天 **40 → 50** 条。
+   - 为什么重要：56% 的条目没有摘要，只能靠标题匹配，而标题里 `metal-rubber` / `metal–rubber` 很常见。
+2. **Crossref 改走相关度排序**（`fetchCrossref`）。删掉 `sort=published` + `order=desc`，
+   `rows` 从 `min(100, max*8)` 起步。`query.bibliographic` 是全文模糊匹配（`total-results=158717`，
+   加引号也无效），按日期倒序取前 80 条**全是最新发表的无关文章**，本地 strict 过滤后剩 0 条。
+   时间范围仍由 `from-pub-date` / `until-pub-date` 保证。
+   - 收益：crossref **0 → 8** 条（`max=8`）。
+3. **增量窗口下限 2 → 30 天**（`radar/scan.js` 的 `MIN_LOOKBACK_DAYS`）。这是最隐蔽的一条：
+   窗口按**出版日期**过滤，而论文从发表到被 OpenAlex / Crossref 收录常有几天到几周的延迟。
+   窗口只有 2–3 天时，「出版日期在 5 天前、今天才进索引」的论文**永远够不到，会被永久漏掉**。
+   放宽到 30 天**不增加请求数**（每页条数由 `maxPerTopic` 决定，与窗口无关），重复抓到的靠 `seen` 去重丢掉。
+
+#### 11.14.3 配套调整：配额默认值 8 → 15，上限 30 → 50
+
+| 位置 | 改动 |
+| --- | --- |
+| `radar/store.js:21` | `defaultSettings().scan.maxPerTopic` **8 → 15** |
+| `radar/store.js:251` | `normalize()` 夹取 `Math.min(30, …)` → `Math.min(50, …)` |
+| `index.js:407` | `POST /settings` 夹取同上 |
+| `client.js:1724` | 输入框 `max: 30` → `max: 50` |
+
+依据：`maxPerTopic=8` 跨源去重后只有 **16–18** 篇独立论文；`15` → **26** 篇；`30` → **42** 篇
+（各源 openalex 30 / crossref 27 / pubmed 2）。
+
+#### 11.14.4 修复后的端到端实测
+
+| 场景 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 日常扫描（上次扫描 0–48 小时前，窗口 30 天） | 窗口被收窄到 **3 天 → 0 条** | 稳定 **30 天 → 4 条** |
+| `maxPerTopic=15` 跨源去重 | 16 篇（crossref 0） | **26 篇**（crossref 15） |
+| 首次扫描（窗口 365 天） | — | **25 篇入库**（2025:5 / 2026:20），seen 键 75 个，6.8 秒 |
+| 紧接着再扫一次 | — | 窗口自动收窄到 **31 天**，0 条新论文（去重正常），4.5 秒 |
+
+#### 11.14.5 测试
+
+- `test/finalize.test.js` 新增 4 例（**17 → 21 例**）：标题四种连字符写法（`metal-rubber` / `Metal–Rubber` /
+  `metal_rubber` / `Metal / Rubber`）全部命中；摘要里的变体同样命中且 `matchedIn` 写 `摘要:metal rubber`；
+  折叠不会放过 `MR Imaging of the Knee`；排除词也走折叠。
+- `test/scan.test.js` 因 `MIN_LOOKBACK_DAYS` 2→30 改了 5 处期望值（「刚扫过 1 小时」现在也是 30 天下限；
+  「隔 10 天 + 配置 365」→ 40 天）。
+- `test/store.test.js:76` `maxPerTopic` 期望 8 → 15。
+- 合计 **193 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`）。
+
+#### 11.14.6 本次踩的坑
+
+1. **「检索太少」的第一反应是放宽 strict，但 strict 只占 26%**。窗口 365 天时 strict 丢的是 50→40，
+   真正的杀手是 Crossref 全丢（80 条里 0 条相关）和窗口只有 3 天（0 条）。**先量再改**。
+2. **bioRxiv 单源 63.8 秒**。它每次拉整个时间窗口的 feed 再本地过滤，窗口调大时会更慢。
+   当前 `fetchBiorxiv` 已把窗口夹到 `Math.min(days, 180)`，但 63 秒仍然过分 —— 下次要给它单独加超时或缓存。
+3. **`newCount` 不在 `runScan` 的 result 上**。result 只有 `newItems`，`newCount` 是 `index.js` 里
+   `result.newItems.length` 现算的。写调试脚本时直接读 `r.newCount` 会得到 `undefined`（被 JSON.stringify 吞掉）。
+
 
 

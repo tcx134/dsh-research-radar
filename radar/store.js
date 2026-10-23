@@ -18,7 +18,7 @@ export function defaultSettings() {
     scan: {
       enabled: true,
       intervalHours: 12,
-      maxPerTopic: 8,
+      maxPerTopic: 15,
       summarize: true,
       // 解析深度：brief（一句话+创新点，最省 token）/ standard / deep（全字段）
       summaryDepth: DEFAULT_SUMMARY_DEPTH,
@@ -248,7 +248,7 @@ function normalize(raw) {
     scan: {
       enabled: asBool(scan.enabled, d.scan.enabled),
       intervalHours: Math.min(168, Math.max(1, asNumber(scan.intervalHours, d.scan.intervalHours))),
-      maxPerTopic: Math.min(30, Math.max(1, asNumber(scan.maxPerTopic, d.scan.maxPerTopic))),
+      maxPerTopic: Math.min(50, Math.max(1, asNumber(scan.maxPerTopic, d.scan.maxPerTopic))),
       summarize: asBool(scan.summarize, d.scan.summarize),
       summaryDepth: normalizeSummaryDepth(scan.summaryDepth),
       lookbackDays: Math.min(3650, Math.max(1, asNumber(scan.lookbackDays, d.scan.lookbackDays))),

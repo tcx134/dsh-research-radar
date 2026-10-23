@@ -204,8 +204,24 @@ function cleanPhrase(value) {
 
 /* ------------------------- 命中判定与相关性排序 -------------------------- */
 
+/**
+ * 把文本折叠成「可直接做子串比较」的形式：小写 + 各类连字符/下划线/斜杠→空格 + 压空白。
+ *
+ * 为什么必须折叠：论文标题里 `metal rubber` 经常写成 `metal-rubber`、
+ * `Metal–Rubber`（en dash）、`metal_rubber`。原来的字面匹配会把它们全部判成
+ * 「没命中主要关键词」，strict 一开就整条丢掉。实测某个方向 50 条候选里有 13 条
+ * （26%）是这种变体 —— 这是「检索得太少」最主要的假阴性来源。
+ */
+function foldText(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[\u2010-\u2015\u2212_/-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function includesPhrase(haystack, phrase) {
-  const needle = phrase.toLowerCase()
+  const needle = foldText(phrase)
   if (needle === '') return false
   return haystack.includes(needle)
 }
@@ -213,12 +229,14 @@ function includesPhrase(haystack, phrase) {
 /**
  * 给一条记录算命中信息：哪些维度在标题 / 摘要里命中。
  * 用于 (a) 本地过滤（服务端未过滤的源），(b) 面板上告诉用户「为什么推给我」。
+ *
+ * 注意：haystack 每篇只折叠一次（摘要可能有 6000 字，逐关键词折叠太浪费）。
  */
 export function scoreItem(item, query) {
-  const title = String(item.title ?? '').toLowerCase()
-  const abstract = String(item.abstract ?? '').toLowerCase()
-  const venue = String(item.venue ?? '').toLowerCase()
-  const authors = (Array.isArray(item.authors) ? item.authors : []).join(' ').toLowerCase()
+  const title = foldText(item.title)
+  const abstract = foldText(item.abstract)
+  const venue = foldText(item.venue)
+  const authors = foldText((Array.isArray(item.authors) ? item.authors : []).join(' '))
 
   const hit = { title: [], abstract: [], author: [], venue: [] }
   for (const kw of query.keywords) {
@@ -285,11 +303,11 @@ function isWrongLanguage(item, query) {
   return !allow.includes(guess)
 }
 
-/** 排除词命中（标题或摘要）→ 丢弃。 */
+/** 排除词命中（标题或摘要）→ 丢弃。同样走折叠，`metal-rubber` 也能被 `metal rubber` 排除。 */
 function isExcluded(item, query) {
   if (query.exclude.length === 0) return false
-  const haystack = `${item.title ?? ''} ${item.abstract ?? ''}`.toLowerCase()
-  return query.exclude.some((word) => word !== '' && haystack.includes(word.toLowerCase()))
+  const haystack = foldText(`${item.title ?? ''} ${item.abstract ?? ''}`)
+  return query.exclude.some((word) => includesPhrase(haystack, word))
 }
 
 /**
@@ -644,9 +662,15 @@ export async function fetchCrossref({ query, max, api, lookbackDays = 30 }) {
   // Crossref 里有把出版日期填到明年的记录，卡一个上限避免推「未来论文」。
   filters.push(`until-pub-date:${new Date().toISOString().slice(0, 10)}`)
   params.set('filter', filters.join(','))
-  params.set('rows', String(Math.min(100, Math.max(10, max * 4))))
-  params.set('sort', 'published')
-  params.set('order', 'desc')
+  // 按相关度排序，不按出版日期排序。
+  //
+  // 为什么：Crossref 的 `query.bibliographic` 是全文模糊匹配，`metal rubber` 会
+  // 命中一切含 metal / rubber 的文章（实测 15 万条）。如果再加 `sort=published`
+  // 倒序，取回的前 80 条全是最新发表的、和关键词毫不相干的文章，本地 strict
+  // 一过滤就剩 0 条 —— 这正是「检索得太少」的第二个根因。
+  // 换成默认的相关度排序后，同样 80 条里有 34 条标题真的含 metal rubber。
+  // 时间范围由上面的 from-pub-date / until-pub-date filter 保证。
+  params.set('rows', String(Math.min(100, Math.max(20, max * 8))))
   params.set(
     'select',
     'DOI,title,container-title,published,author,abstract,is-referenced-by-count,URL',

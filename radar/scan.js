@@ -11,8 +11,18 @@ const MAX_TOPICS = 20
 /** 摘要并发的默认路数。LLM 服务通常有速率限制，别开太大。 */
 const SUMMARY_CONCURRENCY = 3
 const DAY_MS = 24 * 60 * 60 * 1000
-/** 增量窗口至少往前看这么多天，挡住跨零点的边界情况（论文的在线日期常晚一两天）。 */
-const MIN_LOOKBACK_DAYS = 2
+/**
+ * 增量窗口的下限（天）。
+ *
+ * 为什么是 30 而不是 2：这里的窗口是按**出版日期**过滤的，而论文从发表到被
+ * OpenAlex / Crossref 收录常有几天到几周的延迟。窗口只有 2–3 天时，一篇
+ * 出版日期在 10-20、到 10-25 才进索引的论文，每次扫描的窗口都从「今天往回 3 天」
+ * 开始算，永远够不到它 —— **延迟收录的论文会被永久漏掉**。
+ *
+ * 放宽到 30 天不增加请求数（每页条数由 max*4 决定，与窗口无关），重复抓到的
+ * 论文靠 `seen` 去重直接丢掉，代价只是本地多过滤几条。
+ */
+const MIN_LOOKBACK_DAYS = 30
 
 function nowIso() {
   return new Date().toISOString()
@@ -28,7 +38,9 @@ function nowIso() {
  * 规则：
  *   - 从没扫过 / 时间戳坏了 / 上次扫描在未来（改过系统时间）→ 用配置值，宁多勿漏；
  *   - 距上次已超过配置值（比如插件停了两周）→ 也用配置值，不无限往前追；
- *   - 否则 → `间隔天数 + 2 天` 的滑动窗口，且不小于 `MIN_LOOKBACK_DAYS`。
+ *   - 否则 → `间隔天数 + MIN_LOOKBACK_DAYS` 的滑动窗口，且不小于 `MIN_LOOKBACK_DAYS`。
+ *
+ * 下限是 30 天而不是 2 天，原因见 `MIN_LOOKBACK_DAYS` 的注释（收录延迟）。
  *
  * @param {string|null|undefined} lastScanAt ISO 时间串
  * @param {number} configuredDays 配置的 lookbackDays

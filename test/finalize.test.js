@@ -199,3 +199,47 @@ test('shouldSpread 只在窗口超过 90 天时为真', () => {
   assert.equal(shouldSpread('abc'), false)
   assert.equal(shouldSpread(0), false)
 })
+
+/* --------------------- 连字符变体折叠（「检索得太少」主因） --------------------- */
+
+test('标题写成 metal-rubber / metal–rubber 时仍算命中主要关键词', () => {
+  // 实测某方向 50 条候选里有 13 条（26%）是这种变体，原来全被 strict 丢掉
+  const items = [
+    paper('a', 'Hysteretic modeling of a metal-rubber dynamic vibration absorber'),
+    paper('b', 'Air-Coupled Ultrasonic Imaging for Metal–Rubber Debonding Detection'),
+    paper('c', 'Ultrasonic monitoring of metal_rubber barrier degradation'),
+    paper('d', 'Metal / Rubber bonded structures under cyclic loading'),
+  ]
+  const out = finalize(items, metalRubber(), 10, false)
+  assert.deepEqual(
+    out.map((i) => i.id).sort(),
+    ['a', 'b', 'c', 'd'],
+    '四种连字符写法都应该被识别成 metal rubber',
+  )
+})
+
+test('摘要里的连字符变体同样算命中（56% 的条目只有标题没有摘要）', () => {
+  const item = paper('x', 'A study on vibration isolation', {
+    abstract: 'This paper investigates metal–rubber components used in ship isolators.',
+  })
+  const out = finalize([item], metalRubber(), 10, false)
+  assert.equal(out.length, 1)
+  assert.match(out[0].matchedIn, /摘要:metal rubber/)
+})
+
+test('折叠不会把不相关论文放进来（MR 仍然不能单独过 strict）', () => {
+  const items = [
+    paper('mr', 'MR Imaging of the Knee'),
+    paper('hyphen', 'metal-rubber isolator'),
+  ]
+  const out = finalize(items, metalRubber(), 10, false)
+  assert.deepEqual(out.map((i) => i.id), ['hyphen'])
+})
+
+test('排除词也走折叠，能排除连字符写法', () => {
+  const q = metalRubber({ exclude: ['metal rubber'] })
+  const items = [paper('a', 'metal-rubber isolator'), paper('b', 'metal rubber isolator')]
+  assert.deepEqual(finalize(items, q, 10, false), [])
+  // 排除词本身不受 strict 影响，只看有没有出现
+  assert.equal(isExcluded(paper('c', 'Metal–Rubber composite'), q), true)
+})

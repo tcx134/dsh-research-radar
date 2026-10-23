@@ -404,7 +404,7 @@ export function apply(ctx, config) {
                   state.settings.scan.intervalHours = Math.min(168, Math.max(1, Number(scan.intervalHours)))
                 }
                 if (Number.isFinite(Number(scan.maxPerTopic))) {
-                  state.settings.scan.maxPerTopic = Math.min(30, Math.max(1, Number(scan.maxPerTopic)))
+                  state.settings.scan.maxPerTopic = Math.min(50, Math.max(1, Number(scan.maxPerTopic)))
                 }
                 if (Number.isFinite(Number(scan.lookbackDays))) {
                   state.settings.scan.lookbackDays = Math.min(3650, Math.max(1, Number(scan.lookbackDays)))

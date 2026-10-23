@@ -1721,7 +1721,7 @@ window.__ModuleLoader__.load({
                       className: 'drr-input',
                       type: 'number',
                       min: 1,
-                      max: 30,
+                      max: 50,
                       value: scanDraft.maxPerTopic,
                       onChange: (e) => setScanDraft({ ...scanDraft, maxPerTopic: Number(e.target.value) }),
                     }),
