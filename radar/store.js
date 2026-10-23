@@ -12,13 +12,16 @@ import { DEFAULT_SUMMARY_DEPTH, normalizeSummaryDepth } from './summarize.js'
 export const SEEN_MAX_AGE_DAYS = 180
 export const SEEN_MAX_ENTRIES = 20000
 
+/** 每方向抓取配额的新默认值。老默认值是 8，见 `migrateMaxPerTopic`。 */
+export const DEFAULT_MAX_PER_TOPIC = 15
+
 /** 默认设置。任何缺失字段都会在读取时被补齐。 */
 export function defaultSettings() {
   return {
     scan: {
       enabled: true,
       intervalHours: 12,
-      maxPerTopic: 15,
+      maxPerTopic: DEFAULT_MAX_PER_TOPIC,
       summarize: true,
       // 解析深度：brief（一句话+创新点，最省 token）/ standard / deep（全字段）
       summaryDepth: DEFAULT_SUMMARY_DEPTH,
@@ -56,6 +59,19 @@ function asNumber(value, fallback) {
 
 function asBool(value, fallback) {
   return typeof value === 'boolean' ? value : fallback
+}
+
+/**
+ * `maxPerTopic` 的老默认值是 8，而 8 篇配额跨源去重后实际只有 16 篇左右的独立论文
+ * （见 HANDOFF 11.14）。老用户的 state.json 里存着显式的 8，直接改 `defaultSettings`
+ * 对他们无效 —— 所以把「正好等于旧默认值」的读成新默认值。
+ * 用户手动设成别的值（3、20、40）一律尊重。
+ */
+const LEGACY_MAX_PER_TOPIC = 8
+function migrateMaxPerTopic(value) {
+  const n = Math.round(asNumber(value, DEFAULT_MAX_PER_TOPIC))
+  const next = n === LEGACY_MAX_PER_TOPIC ? DEFAULT_MAX_PER_TOPIC : n
+  return Math.min(50, Math.max(1, next))
 }
 
 /** 把字符串（逗号/分号/换行分隔）或数组统一成去空字符串数组。 */
@@ -248,7 +264,7 @@ function normalize(raw) {
     scan: {
       enabled: asBool(scan.enabled, d.scan.enabled),
       intervalHours: Math.min(168, Math.max(1, asNumber(scan.intervalHours, d.scan.intervalHours))),
-      maxPerTopic: Math.min(50, Math.max(1, asNumber(scan.maxPerTopic, d.scan.maxPerTopic))),
+      maxPerTopic: migrateMaxPerTopic(asNumber(scan.maxPerTopic, d.scan.maxPerTopic)),
       summarize: asBool(scan.summarize, d.scan.summarize),
       summaryDepth: normalizeSummaryDepth(scan.summaryDepth),
       lookbackDays: Math.min(3650, Math.max(1, asNumber(scan.lookbackDays, d.scan.lookbackDays))),

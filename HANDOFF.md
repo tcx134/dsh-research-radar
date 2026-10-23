@@ -64,7 +64,7 @@
 - ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
   「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
 - ✅ **连字符变体折叠 + Crossref 改相关度排序 + 窗口下限 30 天**（2026-10-23 修掉「检索得太少」的三个根因，见 11.14）
-- ✅ **193 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **196 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -99,7 +99,7 @@ I:\skill\dsh-research-radar\
 │   ├── scan.js     419 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 │   └── library.js  156 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
-├── test/                 16 个文件 / 193 个用例（node:test，零依赖）
+├── test/                 16 个文件 / 196 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -335,7 +335,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，193 个用例，~1s）
+# 0. 单测（最快，196 个用例，~1s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -503,13 +503,13 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ### P3 —— 工程化
 
 **13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**193 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+`node --test test/*.test.js`，**196 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、HTTP 路由、
 Config schema、趋势统计、论文库分架、邮件 HTML、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 193 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 196 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -524,7 +524,7 @@ Config schema、趋势统计、论文库分架、邮件 HTML、客户端面板�
 1. 读 `README.md`（面向用户）→ 读本文件第四节（环境约束）
 2. 跑第五节的语法检查 + `/state` 端点，确认插件还活着
 3. 用 bcdp 打开 token URL，确认面板五个 tab 都能渲染
-4. **跑一遍单测**：`node --test test/*.test.js`，应该是 193 pass / 0 fail
+4. **跑一遍单测**：`node --test test/*.test.js`，应该是 196 pass / 0 fail
    （在 DSH 沙箱里跑要加 `--experimental-test-isolation=none`，否则 `spawn EPERM`，见第七节 P3 第 13 条）
 5. P0 / P1 / P2 第 9、10、11、12 条已完成（第七节 + 第十一节）；解析深度与时间范围两项见 11.12，
    论文库书架见 11.13，「检索得太少」的三个根因见 11.14
@@ -790,10 +790,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（193 个用例，全部通过）
+### 11.4 测试（196 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 193 / fail 0
+node --test test/*.test.js   →   pass 196 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -802,7 +802,7 @@ node --test test/*.test.js   →   pass 193 / fail 0
 | --- | --- | --- |
 | `test/dedupe.test.js` | 10 | 各种 DOI 前缀、arXiv 归一、中文标题不抹空、键顺序、`migrateSeenKey` |
 | `test/store.test.js` | 9 | 180 天边界、坏时间戳、`keepKeys` 永不删、条数截断、幂等、默认设置（含 `summaryDepth`） |
-| `test/store-file.test.js` | 8 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退、`summaryDepth` 补默认与非法值归一 |
+| `test/store-file.test.js` | 11 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退、`summaryDepth` 补默认与非法值归一 |
 | `test/sources.test.js` | 13 | `normalizeQuery` 的 strong 判定、`scoreItem` 打分、`invertAbstract`、六源标签 |
 | `test/finalize.test.js` | 21 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期；`spreadByYear` 每年代表 / 年内排序 / 条数够用 / 脏数据、`finalize(spread=true)`、`shouldSpread` 90 天边界；**连字符变体折叠 4 例**（标题四种写法、摘要变体、不放过 `MR Imaging`、排除词折叠） |
 | `test/language.test.js` | 14 | `languages` 归一化、zh+en 折成 `[]`、`detectLanguage` 四种输入、`finalize` 的语言过滤与 strict 叠加、store 落盘 |
@@ -1200,7 +1200,7 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
   但 `hasSummary=true`、`groupBy=topic` 时 `label` 是中文方向名、`topicId=t-zzz` 返回空。
 - `test/client-smoke.test.js` 新增 2 例（共 17）：论文库页按年份分架渲染（数字卡、两架、引文数、`.drr-shelf` 两个、
   old 角标存在）、切「按方向」会重新拉带 `groupBy=topic` 的请求 + 空库提示。
-- 全量：`node --test --experimental-test-isolation=none test/*.test.js` → **193 pass / 0 fail / ~1.1s**。
+- 全量：`node --test --experimental-test-isolation=none test/*.test.js` → **196 pass / 0 fail / ~1.1s**。
 - 真实 `state.json`（11 篇）实测：`oldestYear=2023`、`newestYear=2026`、`oldCount=6`、`newCount=5`；
   架分布 `2026:5` / `2025:2` / `2024:2` / `2023:2`；`groupBy=topic` → `金属橡胶(11)`。
 
@@ -1257,13 +1257,20 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 
 | 位置 | 改动 |
 | --- | --- |
-| `radar/store.js:21` | `defaultSettings().scan.maxPerTopic` **8 → 15** |
-| `radar/store.js:251` | `normalize()` 夹取 `Math.min(30, …)` → `Math.min(50, …)` |
-| `index.js:407` | `POST /settings` 夹取同上 |
+| `radar/store.js:16` | 新增 `export const DEFAULT_MAX_PER_TOPIC = 15` |
+| `radar/store.js:24` | `defaultSettings().scan.maxPerTopic` **8 → 15** |
+| `radar/store.js:70-76` | 新增 `LEGACY_MAX_PER_TOPIC = 8` + `migrateMaxPerTopic()`：**老 state.json 里存着显式 8 的迁移成 15**，其它值一律尊重 |
+| `radar/store.js:267` | `normalize()` 走 `migrateMaxPerTopic()`（夹取 1–50） |
+| `index.js:407` | `POST /settings` 夹取 `Math.min(30, …)` → `Math.min(50, …)` |
 | `client.js:1724` | 输入框 `max: 30` → `max: 50` |
 
 依据：`maxPerTopic=8` 跨源去重后只有 **16–18** 篇独立论文；`15` → **26** 篇；`30` → **42** 篇
 （各源 openalex 30 / crossref 27 / pubmed 2）。
+
+⚠️ **必须做迁移的原因**：只改 `defaultSettings` 对老用户**无效** —— 他们的 `state.json` 里已经
+显式存了 `maxPerTopic: 8`，`normalize()` 读出来就是 8，默认值根本不参与。实测用户机器上
+`GET /state` 返回的 `settings.scan.maxPerTopic` 一直是 8，直到加了 `migrateMaxPerTopic`。
+**以后凡是改默认值，都要问一句「老 state 里是不是已经存了旧值」。**
 
 #### 11.14.4 修复后的端到端实测
 
@@ -1282,7 +1289,9 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 - `test/scan.test.js` 因 `MIN_LOOKBACK_DAYS` 2→30 改了 5 处期望值（「刚扫过 1 小时」现在也是 30 天下限；
   「隔 10 天 + 配置 365」→ 40 天）。
 - `test/store.test.js:76` `maxPerTopic` 期望 8 → 15。
-- 合计 **193 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`）。
+- `test/store-file.test.js` 新增 3 例（**8 → 11 例**）：老默认值 8 迁成 15；手动设的 3/20/40/50
+  一律尊重不被覆盖；缺省 / 脏值 / 超上限都夹到合法范围。
+- 合计 **196 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`）。
 
 #### 11.14.6 本次踩的坑
 
