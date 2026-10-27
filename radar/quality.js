@@ -28,6 +28,20 @@ const ISSN_BATCH = 50
 export const QUALITY_TIERS = ['high', 'medium', 'low', 'unknown']
 
 /**
+ * 缺被引信号时给的中性分（0–100）。
+ *
+ * 用 50 而不是 0：0 会让「顶刊 + 刚发表」的论文被当成没人看；用 100 又会让它
+ * 排在已有实证的论文前面。50 表示「还不知道」，不奖励也不惩罚。
+ */
+const NEUTRAL_CITATION = 50
+
+/**
+ * 缺期刊指标时给的中性分（0–100）。理由同 `NEUTRAL_CITATION`：
+ * 期刊没被 OpenAlex 收录（中文刊、会议、预印本）不代表它是烂刊。
+ */
+const NEUTRAL_JOURNAL = 50
+
+/**
  * 把各种写法的 ISSN 归一成 `1234-567X` 形式；认不出来返回 ''。
  * 支持 `02638231`、`0263-8231`、`0263 8231`、`ISSN 0263-8231`。
  */
@@ -61,6 +75,43 @@ export function journalScore(metrics) {
     return Math.min(60, Math.round((Math.min(hIndex, 200) / 200) * 60))
   }
   return 0
+}
+
+/**
+ * 被引百分位 → 分区。OpenAlex 的 `cited_by_percentile_year` 是「同年同领域被引
+ * 排名百分位」，这正好是用户说的「分区」—— 而且它比 JCR 分区更公平：
+ * JCR 只按期刊算，同一本刊里每篇论文分区相同；这个是按**这篇论文**在领域里的
+ * 实际排位算的，跨学科也能比。
+ *
+ * 取上限 `max` 来判：min 90 / max 96 的论文算「前 4%」而不是「前 10%」。
+ */
+export function quartileOf(percentile) {
+  // 必须先挡 null / undefined / ''：`Number(null) === 0`，不挡的话「没有百分位」
+  // 会被判成 Q4（被引前 100%），等于把每篇新论文都标成末档。
+  if (percentile === null || percentile === undefined || percentile === '') return null
+  const value = Number(percentile)
+  if (!Number.isFinite(value)) return null
+  if (value >= 75) return 'Q1'
+  if (value >= 50) return 'Q2'
+  if (value >= 25) return 'Q3'
+  return 'Q4'
+}
+
+/**
+ * 被引百分位换算成分数（0–100）。有百分位就用它，没有才退回年化被引。
+ *
+ * **为什么优先百分位**：工程类论文被引 10 次可能已是领域前 5%，生物类被引 10 次
+ * 只是中游。原始被引数跨学科不可比，年化被引也只是缓解了「老论文占便宜」，
+ * 没解决「学科之间不可比」。百分位两个问题一起解决。
+ */
+export function citationPercentileScore(percentile) {
+  // 同 quartileOf：`Number(null) === 0` 会把「没算出来」当成「前 100%」，
+  // 结果新论文的百分位分是 0 而不是「没有这个信号」。
+  if (percentile === null || percentile === undefined || percentile === '') return null
+  const value = Number(percentile)
+  if (!Number.isFinite(value)) return null
+  // 百分位本身就是 0–100，与 `citationScore` 同量纲，直接当分数用，不再做二次变换
+  return Math.max(0, Math.min(100, Math.round(value)))
 }
 
 /**
@@ -101,12 +152,27 @@ export function paperQuality(item, options = {}) {
   const journalHIndex = metrics !== null && Number.isFinite(Number(metrics.hIndex)) ? Number(metrics.hIndex) : null
 
   const jScore = journalScore(metrics)
-  const cScore = citationScore(item?.citations, item?.publishedAt, now)
+  const percentile = item?.citationPercentile
+  const percentileScore = citationPercentileScore(percentile)
+  // 有百分位就用百分位（跨学科可比），没有才退回年化被引；两者都没有就是 null
+  // （「没有这个信号」），而不是 0（「被引排最后」）。
+  const annualized = citationScore(item?.citations, item?.publishedAt, now)
+  const cScore = percentileScore !== null ? percentileScore : annualized > 0 ? annualized : null
   const reasons = []
 
   // 期刊占 70%，被引占 30% —— 期刊是「长期质量」信号，被引是「这篇本身」信号，
   // 但新论文被引天然少，所以权重给低一些。
-  let score = Math.round(jScore * 0.7 + cScore * 0.3)
+  //
+  // **缺失的信号一律用中性先验 50，两边对称**。两个反面例子都得堵住：
+  //   1. 按 0 分计：没有期刊指标时 jScore=0，按 70% 权重算会把「被引前 10%」
+  //      的论文压成 27 分判 low；
+  //   2. 缺谁就把权重全给另一个：那样「顶刊 + 刚发表、还没算百分位」会拿满分，
+  //      排在「顶刊 + 被引前 45%」前面 —— 「没证据」不该比「中等证据」得分高；
+  //      而「无期刊 + 被引前 10%」会拿 90 分，反超顶刊论文，只因为它的权重没被稀释。
+  // 用 50 表示「还不知道」，不奖励也不惩罚，权重结构始终一致。
+  let score = Math.round(
+    (jScore > 0 ? jScore : NEUTRAL_JOURNAL) * 0.7 + (cScore !== null ? cScore : NEUTRAL_CITATION) * 0.3,
+  )
 
   if (impactFactor !== null) {
     reasons.push(`期刊影响因子 ${impactFactor.toFixed(1)}`)
@@ -119,6 +185,10 @@ export function paperQuality(item, options = {}) {
   }
 
   const cites = Number(item?.citations)
+  const quartile = quartileOf(percentile)
+  if (quartile !== null) {
+    reasons.push(`${quartile}（被引前 ${Math.max(1, 100 - Math.round(percentile))}%）`)
+  }
   if (Number.isFinite(cites) && cites > 0) reasons.push(`被引 ${cites} 次`)
   if (item?.openAccess === true) {
     // 开放获取意味着能抓全文，对「能不能读懂」是实打实的加分
@@ -130,12 +200,28 @@ export function paperQuality(item, options = {}) {
   score = Math.min(100, Math.max(0, score))
 
   let tier
-  if (metrics === null && jScore === 0 && cScore === 0) tier = 'unknown'
+  // 两个信号都没有 → unknown（「不知道」，不是「差」）。
+  // 注意用 cScore === null 而不是 === 0：百分位 0 是「算出来了，排最后」，
+  // 那是有效信号，应该判 low 而不是 unknown。
+  if (metrics === null && jScore === 0 && cScore === null) tier = 'unknown'
   else if (score >= 60) tier = 'high'
   else if (score >= 35) tier = 'medium'
   else tier = 'low'
 
-  return { score, tier, reasons, impactFactor, journalHIndex }
+  // 中性先验只在「另一个信号确实存在」时用来补权重；两个都没有就是真的不知道，
+  // 这时候报 50 分（还叠了 OA 的 +4）会让人以为这是篇中等质量的论文。
+  // 归零更诚实，也让它排在所有有证据的论文后面 —— 事实就是没证据。
+  if (tier === 'unknown') score = 0
+
+  return {
+    score,
+    tier,
+    reasons,
+    impactFactor,
+    journalHIndex,
+    citationPercentile: percentileScore === null ? null : Number(percentile),
+    quartile,
+  }
 }
 
 /**

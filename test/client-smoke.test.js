@@ -264,7 +264,9 @@ function sampleState() {
           tier: 'high',
           impactFactor: 8.5127,
           journalHIndex: 154,
-          reasons: ['期刊影响因子 8.5', '被引 7 次', '开放获取（可抓全文）'],
+          quartile: 'Q1',
+          citationPercentile: 92,
+          reasons: ['期刊影响因子 8.5', '被引前 8%（Q1）', '被引 7 次', '开放获取（可抓全文）'],
         },
         summary: {
           tldr: '提出一种金属橡胶摩擦滞回模型。',
@@ -394,12 +396,18 @@ test('面板首屏渲染出论文卡片、筛选条与摘要字段', async () =>
     // 有 quality 的条目显示「高质量 · 79」与影响因子
     assert.match(text, /高质量 · 79/)
     assert.match(text, /影响因子 8\.5/)
+    // 分区徽章：用户明确要看「几区」，独立于质量分显示（Q1 绿、Q4 灰）
+    assert.match(text, /Q1/)
+    const quartileChip = findAll(tree, (el) => typeof el.props?.className === 'string' && el.props.className.includes('drr-quartile-q1'))[0]
+    assert.ok(quartileChip !== undefined, 'Q1 应该带 drr-quartile-q1 样式')
+    // 没算过百分位的条目不该硬塞 Q4（`Number(null) === 0` 会把它标成末档）
+    assert.doesNotMatch(text, /Q4/)
     // 「凭什么给这个分」默认收起，点质量徽章才展开
     assert.doesNotMatch(text, /期刊影响因子 8\.5/)
     buttonByText(tree, '高质量 · 79').props.onClick()
     mini.beginRender()
     text = textOf(Panel({}))
-    assert.match(text, /依据: 期刊影响因子 8\.5 · 被引 7 次 · 开放获取（可抓全文）/)
+    assert.match(text, /依据: 期刊影响因子 8\.5 · 被引前 8%（Q1） · 被引 7 次 · 开放获取（可抓全文）/)
     // 顶部状态条把「上次扫描 / 本次窗口 / 读过全文」摆在列表上方
     assert.match(text, /上次扫描：/)
     assert.match(text, /本次窗口 3 天/)

@@ -64,12 +64,12 @@
 - ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
   「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
 - ✅ **连字符变体折叠 + Crossref 改相关度排序 + 窗口下限 30 天**（2026-10-23 修掉「检索得太少」的三个根因，见 11.14）
-- ✅ **质量分**（期刊影响因子 70% + 年化被引 30% + 开放获取 4 分 → 0–100 + 高/中/低/待评估，
-  卡片徽章可点开看「依据」，见 11.15）
+- ✅ **质量分**（期刊影响因子 70% + 被引 30% + 开放获取 4 分 → 0–100 + 高/中/低/待评估，
+  外加按**同年同领域被引百分位**算的 **Q1–Q4 分区徽章**，卡片徽章可点开看「依据」，见 11.15）
 - ✅ **全文精读**（arXiv / Europe PMC / OA PDF / 出版社 PDF 四条路线，拿到正文就按正文总结，
   拿不到自动回退摘要，见 11.15）
 - ✅ **面板更直接**（标题回到第一行、质量分与「凭什么」可展开、顶部状态条、六段细节默认收起，见 11.15）
-- ✅ **221 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **227 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -93,20 +93,20 @@ I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
 ├── index.js       816 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     2339 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── client.js     2357 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
-│   ├── store.js    393 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
-│   ├── sources.js 1042 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开 + 连字符折叠
+│   ├── store.js    400 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
+│   ├── sources.js 1059 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开 + 连字符折叠
 │   ├── summarize.js 315 行 LLM 结构化摘要（三档解析深度，支持喂全文）
 │   ├── mail.js     581 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
 │   ├── scan.js     472 行 扫描编排（增量窗口 + 全文抓取 + 并发摘要）+ 摘要邮件正文
-│   ├── quality.js  278 行 质量分（期刊影响因子 / 年化被引 / 开放获取 → 0–100 + 档位）
+│   ├── quality.js  364 行 质量分（期刊影响因子 / 被引百分位与 Q1–Q4 分区 / 开放获取 → 0–100 + 档位）
 │   ├── fulltext.js 538 行 全文抓取（arXiv / Europe PMC / OA PDF / 出版社 PDF → 纯文本）
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 │   └── library.js  165 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
-├── test/                 18 个文件 / 221 个用例（node:test，零依赖）
+├── test/                 18 个文件 / 227 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -342,12 +342,12 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，196 个用例，~1s）
+# 0. 单测（最快，227 个用例，~5s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
 # 1. 语法
-foreach ($f in @('index.js','client.js','radar/config.js','radar/dedupe.js','radar/store.js','radar/sources.js','radar/summarize.js','radar/mail.js','radar/scan.js','radar/stats.js')) {
+foreach ($f in @('index.js','client.js','radar/config.js','radar/dedupe.js','radar/store.js','radar/sources.js','radar/summarize.js','radar/mail.js','radar/scan.js','radar/stats.js','radar/quality.js','radar/fulltext.js','radar/library.js')) {
   & $node --check "$root\$f"; if ($LASTEXITCODE -ne 0) { "FAIL $f" }
 }
 
@@ -366,9 +366,9 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 ⚠️ **不要轻易 POST `/scan`** —— 邮件推送开着时会给用户真发信。要验证扫描先在 `/settings` 里关掉
 `mail.enabled`，或者只跑 `/preview`。
 
-**Client 半边的离线冒烟测试**已经固化成 `test/client-smoke.test.js`（15 个用例，不需要浏览器）：
+**Client 半边的离线冒烟测试**已经固化成 `test/client-smoke.test.js`（17 个用例，不需要浏览器）：
 用极简 React 替身跑 `client.js` 的 factory + apply + 首屏渲染 + 点击筛选 / 标为已读 / 加载更多 /
-趋势页 / 方向表单语言复选框 / 设置页深度与时间范围预设 / 回溯检索，
+趋势页 / 方向表单语言复选框 / 设置页深度与时间范围预设 / 回溯检索 / 质量徽章与分区徽章，
 断言 `mod.inject === ['slots','locale']`、卡片内容、`POST /item` 的 body、`offset` 递增、
 `POST /scan` 的 `lookbackDays`。改完 `client.js` 先跑它，再刷新页面。
 
@@ -509,14 +509,15 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 
 ### P3 —— 工程化
 
-**13. 单元测试** ✅ 已完成（2026-10-21）
-`node --test test/*.test.js`，**196 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
-语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、HTTP 路由、
-Config schema、趋势统计、论文库分架、邮件 HTML、客户端面板渲染冒烟。
+**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 227 个）
+`node --test test/*.test.js`，**227 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+连字符折叠、语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、
+HTTP 路由、Config schema、趋势统计、论文库分架、邮件 HTML、质量分（对数曲线 / 百分位分区 / 缺信号先验）、
+全文抽取（HTML / PMC XML / PDF / 四条路线）、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 196 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 227 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -797,10 +798,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（196 个用例，全部通过）
+### 11.4 测试（227 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 196 / fail 0
+node --test test/*.test.js   →   pass 227 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -808,12 +809,14 @@ node --test test/*.test.js   →   pass 196 / fail 0
 | 文件 | 用例 | 覆盖 |
 | --- | --- | --- |
 | `test/dedupe.test.js` | 10 | 各种 DOI 前缀、arXiv 归一、中文标题不抹空、键顺序、`migrateSeenKey` |
-| `test/store.test.js` | 9 | 180 天边界、坏时间戳、`keepKeys` 永不删、条数截断、幂等、默认设置（含 `summaryDepth`） |
-| `test/store-file.test.js` | 11 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退、`summaryDepth` 补默认与非法值归一 |
+| `test/store.test.js` | 9 | 180 天边界、坏时间戳、`keepKeys` 永不删、条数截断、幂等、默认设置（含 `summaryDepth` / `fullText` / `maxPerTopic` 15） |
+| `test/store-file.test.js` | 12 | 真实落盘读回、旧键迁移、items 里的键不被剪、坏 JSON 回退、`summaryDepth` 补默认与非法值归一、`maxPerTopic` 旧默认 8→15 迁移、**`citationPercentile` 缺字段/显式 null 都读成 null（不能变 0 → Q4）** |
 | `test/sources.test.js` | 13 | `normalizeQuery` 的 strong 判定、`scoreItem` 打分、`invertAbstract`、六源标签 |
 | `test/finalize.test.js` | 21 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期；`spreadByYear` 每年代表 / 年内排序 / 条数够用 / 脏数据、`finalize(spread=true)`、`shouldSpread` 90 天边界；**连字符变体折叠 4 例**（标题四种写法、摘要变体、不放过 `MR Imaging`、排除词折叠） |
 | `test/language.test.js` | 14 | `languages` 归一化、zh+en 折成 `[]`、`detectLanguage` 四种输入、`finalize` 的语言过滤与 strict 叠加、store 落盘 |
-| `test/scan.test.js` | 19 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例（**含 30 天下限**）+ `runScan` 窗口透传/按方向收窄 4 例；`summaryDepth` 默认/三档/非法值/`options` 覆盖 5 例 |
+| `test/quality.test.js` | 14 | `normalizeIssn` 各种写法；`journalScore` 对数曲线（IF 1→29 / 3→58 / 5→75 / 8.512→94 / ≥10 封顶）与 h 指数兜底；`citationScore` 年化；`paperQuality` 四档与理由、脏输入；**`quartileOf` Q1–Q4 与 `null` 不判 Q4**；**`citationPercentileScore` 缺信号返回 `null` 而非 0**；百分位优先（同一篇论文前 10% > 前 60%）；缺信号先验不让「没证据」压过「有证据」；**两个信号都没有时 unknown + 0 分**；`fetchJournalMetrics` 批量去重与上游失败；期刊缓存命中/过期/查不了也记一笔 |
+| `test/fulltext.test.js` | 15 | `arxivIdOf` 各种写法；`htmlToText` 段落/脚本/实体；`extractPmcBody` 只取 body 跳过 ref-list；最小 PDF 抽取与非 PDF 安全；`looksLikeProse` 区分 CID 乱码；`condenseText` 保头保尾；`stripLeadingBoilerplate`；`fetchFullText` 四条路线与限定 routes；publisher-pdf 的 `citation_pdf_url` 与 `/pdf` 后缀；订阅制域名快速失败；总预算跨路线共享 |
+| `test/scan.test.js` | 19 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例（**含 30 天下限**）+ `runScan` 窗口透传/按方向收窄 4 例；`summaryDepth` 默认/三档/非法值/`options` 覆盖 5 例；`fullText` 开关 |
 | `test/select-fresh.test.js` | 8 | 跨源只留高分那条、跨方向、seen 的 DOI/标题键命中、脏候选 |
 | `test/paginate.test.js` | 10 | 分页、筛选、非法参数夹取（**含 `null` → 默认 50**）、`/item`、`/mark-all-read`、收藏落盘 |
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
@@ -822,7 +825,7 @@ node --test test/*.test.js   →   pass 196 / fail 0
 | `test/index.test.js` | 14 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、`GET /library`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
 | `test/summarize.test.js` | 8 | 三档字段集、`abstractChars`/`maxTokens` 严格递增、`summaryDepthOptions`、`buildSystemPrompt` 只列当前档、`buildUserMessage` 按档截断、`summarizePaper` 精简档与深度档 |
 | `test/library.test.js` | 13 | `yearOf` 只认开头四位、`freshnessOf` 90/365 天边界与未来日期、按年份分架与排序、无日期归「未知」、架内排序三级兜底、summary 计数、行只带精简字段、按方向分架与「未分类」、topicId 过滤、脏数据、空库、每架老论文数/未读数 |
-| `test/client-smoke.test.js` | 17 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境 |
+| `test/client-smoke.test.js` | 17 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境、**质量徽章 + 分区徽章** |
 
 `test/helpers.js` 提供 `tempDir(t)` / `makeCtx()` / `call(ctx,req)` / `seedState(dir,state)`。
 
@@ -1317,7 +1320,7 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 
 三件事分别对应下面三节。
 
-#### 11.15.1 质量分（`radar/quality.js`，278 行）
+#### 11.15.1 质量分（`radar/quality.js`，364 行）
 
 数据源只有 OpenAlex 一家够用：`sources` 接口的 `summary_stats` 里有 `2yr_mean_citedness`（与 JCR
 影响因子同源）、`h_index`、`i10_index`。
@@ -1345,6 +1348,39 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
   不是 `low` —— 没见过不等于差。
 - `reasons` 是给人看的中文短语（`期刊影响因子 8.5` / `被引 30 次` / `开放获取（可抓全文）` /
   `核心期刊` / `未识别到期刊` / `期刊指标未收录`），面板点徽章就展开这些。
+
+**分区（Q1–Q4）与百分位优先（2026-10-27 补）**
+
+用户原话是「根据论文得**分区**、影响因子等元素判断质量」—— 分区是单独一项，不能只用 IF 代替。
+
+- 数据源：OpenAlex `works` 的 `cited_by_percentile_year`，是**同年同领域**的被引百分位
+  （实测 `10.1016/j.ymssp.2026.1` 返回 `{min:90,max:96}`）。这比 JCR 分区更公平：JCR 只按期刊算，
+  同一本刊里每篇论文分区相同；这个是按**这篇论文**在领域里的实际排位算的，跨学科可比。
+- `quartileOf(percentile)`：`>=75 → Q1`、`>=50 → Q2`、`>=25 → Q3`、否则 `Q4`；**拿不到百分位返回 `null`
+  而不是 Q4**。取区间**上限** `max` 判档（min 90 / max 96 算「前 4%」）。
+- 打分时**百分位优先**：有百分位就用 `citationPercentileScore(percentile) = clamp(percentile)`，
+  没有才退回年化被引。理由：工程类被引 10 次可能已是领域前 5%，生物类被引 10 次只是中游，
+  原始被引数跨学科不可比，年化只缓解了「老论文占便宜」，没解决学科间不可比。百分位两个问题一起解决。
+- 面板上分区是**独立徽章**（`drr-chip-quartile`，Q1 绿 / Q2 灰底 / Q3Q4 灰字），不折进分数，
+  因为用户要看的是「几区」。卡片 `title` 解释口径。
+
+**五处打分 bug（都是「没数据」被当成「数据是 0」）**
+
+三个函数都栽在同一个 JS 陷阱上：`Number(null) === 0`、`Number('') === 0`、`Number(undefined) === NaN`。
+
+1. `quartileOf(null)` → `0 >= 25` 不成立 → **Q4**，等于把每篇新论文都标成末档。→ 开头先挡 `null/undefined/''`。
+2. `citationPercentileScore(null)` → **0 分**（「被引排最后」），把没算过百分位的论文判死。→ 同上。
+3. 缺失信号按 0 分计入权重：没有期刊指标时 `jScore = 0`，70% 权重的 0 分把「被引前 10%」的论文
+   压成 **27 分 low**。→ 缺失信号改填**中性先验 50**（`NEUTRAL_JOURNAL` / `NEUTRAL_CITATION`）。
+4. 但只填中性先验会反过来让「缺谁就把权重全给另一个」消失掉一半问题：修复后「顶刊 + 刚发表、
+   还没算百分位」拿 **81 分**，「顶刊 + 被引前 45%」拿 **82 分** —— 「没证据」不再高于「中等证据」，
+   这是**对的**。而修复前前者是 100 分、后者 82 分。
+5. 两个信号**都没有**时仍然算出一个 50 分（还叠 OA 的 +4 = 54），面板显示「待评估 · 50」，
+   看起来像篇中等质量的论文。→ `tier === 'unknown'` 时**把 score 归 0**，面板不露数字（只显示「待评估」）。
+
+实测校准（5 组）：顶刊 IF8.5 + 前 92% + 被引 30 + OA → **97 分 high Q1**；好刊 IF5.7 + 被引 0 + OA →
+**59 分 medium**；一般 IF2.6 + 前 40% → **47 分 medium Q3**；低 IF0.6 + 被引 5 → **17 分 low**；
+无期刊 + 前 0% → 35 分 medium Q4（中性期刊先验 50×0.7 撑起来的，可接受）。
 
 **实测校准**（4 组）：顶刊 IF8.5 被引30 OA → **97 分 high**；好刊 IF5.7 被引0 OA → **59 分 medium**；
 一般 IF2.6 被引6 OA → **47 分 medium**；低 IF0.6 被引5 → **17 分 low**。
@@ -1413,25 +1449,29 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
    压在标题上面，用户在列表里找的明明是标题，却要先扫一排小字。现在拆成
    `titleRow`（未读点 + 标题 + 收藏星）+ `qualityRow`（质量分 + 影响因子 + 被引 + 全文/仅摘要 + OA + 日期）。
 2. **质量分可点开看「凭什么」**。徽章从 `<span>` 改成 `<button>`（`.drr-q-btn`），点一下展开
-   `依据: 期刊影响因子 8.5 · 被引 7 次 · 开放获取（可抓全文）`（`.drr-why`）。默认收起，不占版面。
-3. **顶部状态条**（`.drr-strip`）。把「上次扫描 / 本次窗口 N 天 / 新增 N / 已读全文 N / 高质量 N」
+   `依据: 期刊影响因子 8.5 · 被引前 8%（Q1） · 被引 7 次 · 开放获取（可抓全文）`（`.drr-why`）。
+   默认收起，不占版面。
+3. **分区独立成徽章**（`.drr-chip-quartile`）。用户明确要看「几区」，所以 `Q1` 不折进质量分，
+   单独显示在质量分右边：Q1 绿底、Q2 灰底、Q3/Q4 只灰字（视觉上从「值得读」往后递减）。
+   **没有百分位就不显示分区** —— 宁可空着，也不硬塞一个 Q4 把新论文打成末档。
+4. **顶部状态条**（`.drr-strip`）。把「上次扫描 / 本次窗口 N 天 / 新增 N / 已读全文 N / 高质量 N」
    从设置页搬到论文列表顶上 —— 这些是每次打开面板最想先知道的事，藏在设置里等于没有。
    左边一个小圆点：绿=空闲、琥珀+呼吸动画=正在扫描。右边是档位图例
    `高质量 ≥60 · 中等 ≥35 · 较低 <35`，用户不用记刻度。
-4. **六段细节默认收起**（沿用 11.15 之前的改动）。卡片先给「标题 + 一句话结论 + 质量」，
+5. **六段细节默认收起**（沿用 11.15 之前的改动）。卡片先给「标题 + 一句话结论 + 质量」，
    想看再点「展开细节」。
 
 #### 11.15.4 测试
 
 | 文件 | 用例数 | 新增内容 |
 | --- | --- | --- |
-| `test/quality.test.js` | 9 | normalizeIssn / 对数曲线边界 / 年化被引 / 四档判定 / 脏输入 / 批量查 ISSN / 上游失败 / 期刊缓存命中与过期 |
+| `test/quality.test.js` | 14 | normalizeIssn / 对数曲线边界 / 年化被引 / 四档判定 / 脏输入 / 批量查 ISSN / 上游失败 / 期刊缓存命中与过期 / **Q1–Q4 分区与 `null` 不判 Q4** / **缺信号返回 `null` 而非 0** / **百分位优先跨学科可比** / **缺信号先验不许「没证据」压过「有证据」** / **两信号都没有时 unknown + 0 分** |
 | `test/fulltext.test.js` | 15 | arXiv 编号识别 / HTML 转文本 / PMC body 抽取 / PDF 抽取 / 非 PDF 安全 / 可读性判定 / 截断 / 四条路线回退 / 限定路线 / `citation_pdf_url` / 域名拼 `/pdf` / 订阅制快速失败 / 预算共享 |
 | `test/scan.test.js` | 20 | 新增「按设置决定是否抓全文」（关掉时只发 1 个 RSS 请求，不碰 doi.org） |
 | `test/store.test.js` | 9 | 默认值加 `fullText: true` |
-| `test/client-smoke.test.js` | 17 | 新增质量徽章「高质量 · 79」/ 影响因子 / 点开「依据」/ 顶部状态条断言 |
+| `test/client-smoke.test.js` | 17 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`** |
 
-合计 **221 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 4.4 秒）。
+合计 **227 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 5.3 秒）。
 
 #### 11.15.5 本次踩的坑
 
@@ -1443,6 +1483,14 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
    高位字节变成 `U+FFFD`，`looksLikeProse` 直接判失败。`pdfToText` 全程用 `buf.toString('latin1')`。
 4. **改 UI 后必须跑 client-smoke**。卡片结构从 `topRow + metaRow + title` 变成
    `titleRow + qualityRow + whyLine + metaRow`，所有基于文本顺序的断言都要重新对一遍。
+5. **对象字面量里同一个键写两遍，后者静默覆盖前者**。`radar/store.js` 的 `normalizeItem` 里
+   `citationPercentile` 出现了两次：第一次写了正确的 `&& raw.citationPercentile !== null` 守卫，
+   第二次是更早的旧写法 `Number.isFinite(Number(raw.citationPercentile))`。JS 不报错、`node --check`
+   也不报错，**后一个定义生效**，于是老 state 里没有这个字段时 `Number(undefined) = NaN` 侥幸没错，
+   但一旦值是 `null` 就会变成 `0` —— 每篇论文都被判成 Q4。这是本仓库第 4 次踩 `Number(null) === 0`
+   的坑（前三次：`clampInt`、`stats.js` 的 `days`、`quality.js` 的 `quartileOf` /
+   `citationPercentileScore`），教训是**这个守卫必须集中写在一个函数里复用**，不要每处手抄。
+   排查手法：`grep -n 'citationPercentile' radar/store.js` 一眼就能看到相邻两行同名键。
 
 
 

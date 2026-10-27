@@ -7,12 +7,14 @@ import test from 'node:test'
 import {
   JOURNAL_CACHE_DAYS,
   QUALITY_TIERS,
+  citationPercentileScore,
   citationScore,
   createJournalCache,
   fetchJournalMetrics,
   journalScore,
   normalizeIssn,
   paperQuality,
+  quartileOf,
 } from '../radar/quality.js'
 
 test('normalizeIssn 认得出各种写法，认不出返回空串', () => {
@@ -106,6 +108,75 @@ test('paperQuality 对脏输入安全', () => {
     assert.ok(Number.isFinite(q.score), `score 必须是数字：${JSON.stringify(input)}`)
     assert.ok(QUALITY_TIERS.includes(q.tier))
   }
+})
+
+test('quartileOf 把被引百分位分成 Q1–Q4，没有百分位返回 null', () => {
+  assert.equal(quartileOf(96), 'Q1')
+  assert.equal(quartileOf(90), 'Q1')
+  assert.equal(quartileOf(75), 'Q1')
+  assert.equal(quartileOf(74), 'Q2')
+  assert.equal(quartileOf(50), 'Q2')
+  assert.equal(quartileOf(49), 'Q3')
+  assert.equal(quartileOf(25), 'Q3')
+  assert.equal(quartileOf(24), 'Q4')
+  assert.equal(quartileOf(0), 'Q4')
+  // `Number(null) === 0`、`Number('') === 0`，不先挡掉就会把每篇新论文标成 Q4
+  for (const missing of [null, undefined, '', 'abc', NaN]) {
+    assert.equal(quartileOf(missing), null, `${String(missing)} 应该没有分区`)
+  }
+})
+
+test('citationPercentileScore 直接沿用百分位，缺信号时是 null 而不是 0', () => {
+  assert.equal(citationPercentileScore(96), 96)
+  assert.equal(citationPercentileScore(50), 50)
+  assert.equal(citationPercentileScore(0), 0)
+  // null 不能变成 0：0 分等于「被引排最后」，会让没算过百分位的新论文被判死
+  for (const missing of [null, undefined, '', 'abc']) {
+    assert.equal(citationPercentileScore(missing), null)
+  }
+})
+
+test('有百分位时优先用百分位，跨学科可比', () => {
+  const now = Date.parse('2026-10-01T00:00:00Z')
+  // 同一篇论文（同样 5 次被引、同样 2025 年发表），有百分位时按百分位算
+  const top = paperQuality({ citations: 5, publishedAt: '2025-01-01', citationPercentile: 90 }, { now })
+  const mid = paperQuality({ citations: 5, publishedAt: '2025-01-01', citationPercentile: 40 }, { now })
+  assert.ok(top.score > mid.score, `前 10% 应该高于前 60%：${top.score} vs ${mid.score}`)
+  assert.equal(top.quartile, 'Q1')
+  assert.equal(mid.quartile, 'Q3')
+  assert.ok(top.reasons.some((r) => r.includes('Q1')))
+  assert.ok(top.reasons.some((r) => r.includes('被引前 10%')))
+})
+
+test('缺一个信号时用中性先验补权重，不让「没证据」压过「有证据」', () => {
+  const journals = new Map([['0263-8231', { twoYearMeanCitedness: 8.512, hIndex: 154, isCore: true }]])
+  const now = Date.parse('2026-10-01T00:00:00Z')
+  // 顶刊 + 刚发表（还没算百分位）不该拿到比「顶刊 + 前 45%」更高的分
+  const fresh = paperQuality({ issn: '0263-8231', citations: 0, publishedAt: '2026-09-01' }, { journals, now })
+  const decent = paperQuality(
+    { issn: '0263-8231', citations: 3, publishedAt: '2026-05-01', citationPercentile: 55 },
+    { journals, now },
+  )
+  assert.ok(fresh.score <= decent.score, `没证据(${fresh.score}) 不该高于中等证据(${decent.score})`)
+  assert.equal(fresh.quartile, null)
+
+  // 缺期刊信号时同理：不能被「只按被引算」推到顶刊论文前面
+  const noJournal = paperQuality({ citations: 5, publishedAt: '2026-01-01', citationPercentile: 90 }, { journals, now })
+  const topJournal = paperQuality(
+    { issn: '0263-8231', citations: 3, publishedAt: '2026-05-01', citationPercentile: 55 },
+    { journals, now },
+  )
+  assert.ok(noJournal.score < 90, `缺期刊信号不该拿满分附近：${noJournal.score}`)
+  assert.ok(Number.isFinite(topJournal.score))
+})
+
+test('两个信号都没有时是 unknown 且 0 分，不是「中等 50 分」', () => {
+  const q = paperQuality({ issn: '', citations: 0, publishedAt: '2026-10-01', openAccess: true })
+  assert.equal(q.tier, 'unknown')
+  // 中性先验只在另一个信号存在时补权重；两个都没有还报 50 分会让人以为这是篇中等论文
+  assert.equal(q.score, 0)
+  assert.equal(q.quartile, null)
+  assert.equal(q.citationPercentile, null)
 })
 
 test('fetchJournalMetrics 批量查 ISSN 并跳过查不到的', async (t) => {

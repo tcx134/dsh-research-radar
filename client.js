@@ -149,6 +149,7 @@ window.__ModuleLoader__.load({
         quality_unknown: '待评估',
         quality_title: '综合期刊影响因子、被引与开放获取算出的质量分',
         quality_why: '依据',
+        quartile_title: '分区：按这篇论文在同年同领域里的被引排位算（前 25% 为 Q1）',
         impact_factor: '影响因子',
         read_fulltext: '已读全文',
         read_abstract: '仅摘要',
@@ -344,6 +345,7 @@ window.__ModuleLoader__.load({
         quality_unknown: 'Unrated',
         quality_title: 'Quality score from journal impact, citations and open access',
         quality_why: 'Why',
+        quartile_title: 'Quartile by citation percentile within the same field and year (top 25% = Q1)',
         impact_factor: 'Impact factor',
         read_fulltext: 'Full text',
         read_abstract: 'Abstract only',
@@ -507,6 +509,10 @@ window.__ModuleLoader__.load({
 .drr-q-medium{background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.18));color:var(--dsw-alias-label-primary,#e6e6e6);border-color:var(--dsw-alias-border-l4,rgba(128,128,128,.28))}
 .drr-q-low{background:transparent;color:var(--dsw-alias-label-tertiary,#7d7d7d);border-color:var(--dsw-alias-border-l4,rgba(128,128,128,.28))}
 .drr-q-unknown{background:transparent;color:var(--dsw-alias-label-tertiary,#7d7d7d);border-color:var(--dsw-alias-border-l4,rgba(128,128,128,.28));border-style:dashed;font-weight:500}
+.drr-chip-quartile{font-weight:700;letter-spacing:.3px}
+.drr-quartile-q1{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43);border-color:transparent}
+.drr-quartile-q2{background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.18));color:var(--dsw-alias-label-primary,#e6e6e6);border-color:transparent}
+.drr-quartile-q3,.drr-quartile-q4{background:transparent;color:var(--dsw-alias-label-tertiary,#7d7d7d)}
 .drr-chip-if{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43);font-weight:600}
 .drr-chip-full{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43);font-weight:600}
 .drr-chip-abs{opacity:.65}
@@ -684,6 +690,11 @@ window.__ModuleLoader__.load({
       const impactFactor =
         quality !== null && Number.isFinite(Number(quality.impactFactor)) ? Number(quality.impactFactor) : null
       const score = quality !== null && Number.isFinite(Number(quality.score)) ? Math.round(Number(quality.score)) : null
+      // unknown 档的 score 是中性先验算出来的（50 分），不是真实评价。
+      // 直接显示「待评估 · 50」会让人以为这篇是中等质量，所以这种情况下不露数字。
+      const showScore = score !== null && badge.cls !== 'drr-q-unknown'
+      // 分区（Q1–Q4）来自「同年同领域被引百分位」，是用户明确要看的东西
+      const quartile = quality !== null && typeof quality.quartile === 'string' ? quality.quartile : null
       // 摘要基于全文还是仅摘要 —— 直接决定用户该不该相信「局限」「方法」这些字段
       const basis = s !== null && s.basis === 'fulltext' ? 'fulltext' : 'abstract'
       // 细节默认收起：一张卡片先给「标题 + 一句话结论 + 质量」，想看再展开。
@@ -719,8 +730,15 @@ window.__ModuleLoader__.load({
             title: t('quality_title'),
             onClick: () => setWhyOpen(!whyOpen),
           },
-          score === null ? badge.label : `${badge.label} · ${score}`,
+          showScore ? `${badge.label} · ${score}` : badge.label,
         ),
+        quartile !== null
+          ? h(
+              'span',
+              { className: `drr-chip drr-chip-quartile drr-quartile-${quartile.toLowerCase()}`, title: t('quartile_title') },
+              quartile,
+            )
+          : null,
         impactFactor !== null
           ? h('span', { className: 'drr-chip drr-chip-if' }, `${t('impact_factor')} ${impactFactor.toFixed(1)}`)
           : null,

@@ -171,6 +171,13 @@ function normalizeItem(raw) {
     issn: asString(raw.issn),
     doi: asString(raw.doi),
     citations: asNumber(raw.citations, 0),
+    // 同年同领域被引百分位（0–100）。老 state 里没有这个字段，读到就是 null ——
+    // 表示「这篇没算过百分位」，质量分会退回年化被引，不会崩也不会误判成末档。
+    // 注意必须显式挡 null / ''：`Number(null) === 0` 会让每篇老论文都变成
+    // 「被引排最后」（百分位 0 → Q4），这正是 quality.js 里堵过的同一个坑。
+    citationPercentile: Number.isFinite(Number(raw.citationPercentile)) && raw.citationPercentile !== null
+      ? Number(raw.citationPercentile)
+      : null,
     openAccess: asBool(raw.openAccess, false),
     oaPdfUrl: asString(raw.oaPdfUrl),
     matchedIn: asString(raw.matchedIn),

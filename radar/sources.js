@@ -449,6 +449,20 @@ function mailtoParam(api) {
   return `&mailto=${encodeURIComponent(mail)}${key === '' ? '' : `&api_key=${encodeURIComponent(key)}`}`
 }
 
+/**
+ * OpenAlex 的 `cited_by_percentile_year` 是 `{min, max}`（有时是数字），
+ * 表示「同年同领域被引排在第 X 百分位」。取上限 `max` —— 下限偏保守。
+ * 论文太新还没算出来时是 `null`，这时返回 `null` 而不是 0：
+ * 「没算出来」和「排位 0」是两回事，后者会把新论文误判成没人看。
+ */
+function percentileOf(value) {
+  if (value === null || typeof value !== 'object') return null
+  const max = Number(value.max)
+  if (Number.isFinite(max)) return Math.max(0, Math.min(100, max))
+  const min = Number(value.min)
+  return Number.isFinite(min) ? Math.max(0, Math.min(100, min)) : null
+}
+
 /** OpenAlex 的摘要以倒排索引形式返回，这里还原成正常句子。 */
 export function invertAbstract(index) {
   if (index === null || typeof index !== 'object') return ''
@@ -532,7 +546,7 @@ async function fetchOpenAlexPage({ filter, perPage, sort, api }) {
   const url =
     'https://api.openalex.org/works?filter=' +
     encodeFilter(filter) +
-    `&per-page=${perPage}&sort=${sort}&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,open_access,type` +
+    `&per-page=${perPage}&sort=${sort}&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,cited_by_percentile_year,open_access,type` +
     mailtoParam(api)
   const payload = JSON.parse(await getText(url))
   return Array.isArray(payload?.results) ? payload.results : []
@@ -590,6 +604,9 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
       issn,
       doi,
       citations: Number.isFinite(work?.cited_by_count) ? work.cited_by_count : 0,
+      // 被引在同年度同领域里的百分位（0–100）。原始被引数在不同学科之间没法比，
+      // 百分位可以 —— 工程类被引 10 次可能已是前 5%，生物类 10 次只是中游。
+      citationPercentile: percentileOf(work?.cited_by_percentile_year),
       openAccess: work?.open_access?.is_oa === true,
       oaPdfUrl,
     }
