@@ -267,3 +267,43 @@ test('runScan 把解析深度记在 result 上（默认 standard，可配 brief/
   const override = await storeWithTopic(t, { settings: scanSettings('brief') })
   assert.equal((await runScan({}, {}, override.store, { summaryDepth: 'deep' })).summaryDepth, 'deep')
 })
+
+/** 一个只含一篇论文的 RSS，用来在不发真网络请求的情况下喂 runScan。 */
+const FEED_XML = `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>
+<item><title>Metal rubber isolator design</title>
+<link>https://example.org/paper</link>
+<description>We study metal rubber isolators.</description>
+<pubDate>Wed, 21 Oct 2026 00:00:00 GMT</pubDate></item>
+</channel></rss>`
+
+/**
+ * 关掉全文抓取时，扫描不应该去碰 doi.org / 出版社站点。
+ * 这条同时守住「settings.scan.fullText 真的接到了 runScan 上」和
+ * 「关掉之后确实省掉了那几次网络请求」。
+ */
+test('runScan 按设置决定是否抓全文', async (t) => {
+  const original = globalThis.fetch
+  const requested = []
+  globalThis.fetch = async (url) => {
+    requested.push(String(url))
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/rss+xml']]),
+      text: async () => FEED_XML,
+    }
+  }
+  t.after(() => {
+    globalThis.fetch = original
+  })
+
+  const off = await storeWithTopic(t, {
+    settings: { rss: ['https://example.org/feed.xml'], scan: { summarize: false, fullText: false } },
+  })
+  const offResult = await runScan({}, {}, off.store, {})
+  assert.equal(offResult.newItems.length, 1)
+  assert.equal(offResult.fullTextCount, 0)
+  // 只取了 RSS，没有为了全文再发任何请求
+  assert.equal(requested.filter((u) => u.includes('doi.org')).length, 0)
+  assert.equal(requested.length, 1)
+})

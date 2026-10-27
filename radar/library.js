@@ -60,9 +60,15 @@ function compactItem(item, now) {
     citations: item.citations,
     read: item.read === true,
     starred: item.starred === true,
+    // 质量分与档位（书架上打徽章、按质量排都用它）
+    qualityScore: Number.isFinite(Number(item.quality?.score)) ? Number(item.quality.score) : null,
+    qualityTier: typeof item.quality?.tier === 'string' ? item.quality.tier : '',
+    impactFactor: Number.isFinite(Number(item.quality?.impactFactor)) ? Number(item.quality.impactFactor) : null,
     // 有没有生成过结构化摘要（有摘要的卡片才能「精读」，书架上标一下）
     hasSummary: item.summary !== null && typeof item.summary === 'object',
     summaryDepth: item.summary?.depth ?? '',
+    // 摘要是基于全文还是仅摘要 —— 书架上一眼看出哪些读透了
+    summaryBasis: item.summary?.basis ?? '',
     discoveredAt: item.discoveredAt,
     // 从发表到现在过了多少天（老论文判定与排序都用它）
     ageDays: Number.isFinite(at) ? Math.floor((now - at) / 86400000) : null,
@@ -150,6 +156,9 @@ export function buildLibrary(items, options = {}) {
       unreadCount: rows.filter((row) => row.read !== true).length,
       starredCount: rows.filter((row) => row.starred === true).length,
       summarizedCount: rows.filter((row) => row.hasSummary).length,
+      // 「这个库里有多少篇是值得读的、多少篇读到了全文」
+      highQualityCount: rows.filter((row) => row.qualityTier === 'high').length,
+      fullTextCount: rows.filter((row) => row.summaryBasis === 'fulltext').length,
     },
   }
 }

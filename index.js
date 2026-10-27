@@ -6,6 +6,8 @@ import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
 import { buildLibrary } from './radar/library.js'
 import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
+import { createJournalCache, QUALITY_TIERS } from './radar/quality.js'
+import path from 'node:path'
 
 export const name = 'dsh-research-radar'
 
@@ -103,8 +105,15 @@ function toLanguageList(value) {
 const DEFAULT_ITEM_LIMIT = 50
 const MAX_ITEM_LIMIT = 500
 
-/** 条目筛选条件。 */
-const ITEM_FILTERS = new Set(['all', 'unread', 'starred'])
+/** 条目筛选条件。`high` / `fulltext` 是给「只看值得读的」用的。 */
+const ITEM_FILTERS = new Set(['all', 'unread', 'starred', 'high', 'fulltext'])
+
+/**
+ * 排序方式：
+ *   - `recent`：按发现时间倒序（默认，适合「每天看新到的」）；
+ *   - `quality`：按质量分倒序，同分再按发现时间（适合「这周该读哪几篇」）。
+ */
+const ITEM_SORTS = new Set(['recent', 'quality'])
 
 function clampInt(value, fallback, min, max) {
   // 注意 Number(null) === 0：查询参数缺失时必须走 fallback，否则 limit 会被
@@ -128,13 +137,27 @@ export function paginateItems(all, query = {}) {
   const source = Array.isArray(all) ? all : []
   const topicId = String(query.topicId ?? '')
   const filter = ITEM_FILTERS.has(String(query.filter ?? '')) ? String(query.filter) : 'all'
-  const filtered = source.filter((item) => {
+  const sort = ITEM_SORTS.has(String(query.sort ?? '')) ? String(query.sort) : 'recent'
+  let filtered = source.filter((item) => {
     if (item === null || typeof item !== 'object') return false
     if (topicId !== '' && item.topicId !== topicId) return false
     if (filter === 'unread') return item.read !== true
     if (filter === 'starred') return item.starred === true
+    // 「值得读」= 高质量（顶刊 / 高被引 / 开放获取）
+    if (filter === 'high') return item.quality?.tier === 'high'
+    // 「有全文」= 摘要是基于全文写的（不是只喂了摘要）
+    if (filter === 'fulltext') return item.summary?.basis === 'fulltext'
     return true
   })
+  if (sort === 'quality') {
+    // 复制一份再排 —— store 里的数组顺序是「发现顺序」，seen 剪枝依赖它
+    filtered = [...filtered].sort((a, b) => {
+      const qa = Number(a?.quality?.score ?? -1)
+      const qb = Number(b?.quality?.score ?? -1)
+      if (qb !== qa) return qb - qa
+      return String(b?.discoveredAt ?? '').localeCompare(String(a?.discoveredAt ?? ''))
+    })
+  }
   const limit = clampInt(query.limit, DEFAULT_ITEM_LIMIT, 1, MAX_ITEM_LIMIT)
   const offset = clampInt(query.offset, 0, 0, Number.MAX_SAFE_INTEGER)
   const page = filtered.slice(offset, offset + limit)
@@ -160,6 +183,8 @@ export function apply(ctx, config) {
         ? config
         : {}
   const store = createStore(ctx, pluginConfig)
+  // 期刊指标缓存（影响因子 / h 指数）跟 state.json 放同一个目录
+  const journalCache = createJournalCache({ dir: path.dirname(store.path) })
   let scanRunning = false
   let lastError = ''
 
@@ -184,9 +209,14 @@ export function apply(ctx, config) {
         all: state.items.length,
         unread: state.items.filter((i) => i.read !== true).length,
         starred: state.items.filter((i) => i.starred === true).length,
+        // 高质量论文数 —— 面板顶部直接显示「这周有 N 篇值得读」
+        highQuality: state.items.filter((i) => i.quality?.tier === 'high').length,
+        fullText: state.items.filter((i) => i.summary?.basis === 'fulltext').length,
       },
       settings: { ...state.settings, mail: maskMailSettings(state.settings.mail) },
       sources: SOURCE_LABELS,
+      // 质量档位（面板的筛选与徽章用）
+      qualityTiers: QUALITY_TIERS,
       // 解析深度可选档位（面板设置页直接渲染成选择器，带每档的预算说明）
       summaryDepths: summaryDepthOptions(),
       status: {
@@ -210,7 +240,9 @@ export function apply(ctx, config) {
     }
     scanRunning = true
     try {
-      const result = await runScan(ctx, pluginConfig, store, options ?? {})
+      // 期刊指标（影响因子 / h 指数）缓存 30 天，runScan 里会按本次新抓到的
+      // ISSN 再 ensure 一次（老论文的 ISSN 预热不到新抓到的期刊）。
+      const result = await runScan(ctx, pluginConfig, store, { ...(options ?? {}), journalCache })
       if (result.errors.length > 0) {
         lastError = result.errors.map((e) => `${e.source}: ${e.message}`).join('; ')
       } else {
@@ -274,6 +306,7 @@ export function apply(ctx, config) {
                 offset: url.searchParams.get('offset'),
                 topicId: url.searchParams.get('topicId') ?? '',
                 filter: url.searchParams.get('filter') ?? '',
+                sort: url.searchParams.get('sort') ?? '',
               }),
             )
             return
@@ -288,8 +321,7 @@ export function apply(ctx, config) {
                 days: url.searchParams.get('days'),
                 topicId: url.searchParams.get('topicId') ?? '',
                 sourceLabels: SOURCE_LABELS,
-              }),
-            )
+              }),            )
             return
           }
 
@@ -410,6 +442,8 @@ export function apply(ctx, config) {
                   state.settings.scan.lookbackDays = Math.min(3650, Math.max(1, Number(scan.lookbackDays)))
                 }
                 if (typeof scan.summarize === 'boolean') state.settings.scan.summarize = scan.summarize
+                // 抓全文再总结（默认开）。关掉能显著加快扫描，但摘要字段会更空。
+                if (typeof scan.fullText === 'boolean') state.settings.scan.fullText = scan.fullText
                 // 解析深度决定每次摘要烧多少 token，非法值退回默认档
                 if (typeof scan.summaryDepth === 'string') {
                   state.settings.scan.summaryDepth = normalizeSummaryDepth(scan.summaryDepth)

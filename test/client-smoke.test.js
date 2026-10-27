@@ -259,6 +259,13 @@ function sampleState() {
         read: false,
         starred: true,
         discoveredAt: '2026-10-20T10:00:00.000Z',
+        quality: {
+          score: 79,
+          tier: 'high',
+          impactFactor: 8.5127,
+          journalHIndex: 154,
+          reasons: ['期刊影响因子 8.5', '被引 7 次', '开放获取（可抓全文）'],
+        },
         summary: {
           tldr: '提出一种金属橡胶摩擦滞回模型。',
           problem: '现有模型在动态载荷下失准。',
@@ -268,6 +275,7 @@ function sampleState() {
           limitations: '摘要未提及',
           relevance: '与减振设计直接相关。',
           tags: ['金属橡胶', '滞回'],
+          basis: 'fulltext',
         },
       },
       {
@@ -293,7 +301,7 @@ function sampleState() {
       },
     ],
     page: { total: 2, offset: 0, limit: 50, hasMore: true },
-    counts: { all: 2, unread: 1, starred: 1 },
+    counts: { all: 2, unread: 1, starred: 1, highQuality: 1, fullText: 1 },
     settings: {
       scan: {
         enabled: true,
@@ -362,11 +370,18 @@ test('面板首屏渲染出论文卡片、筛选条与摘要字段', async () =>
   const fetchStub = installFetch(() => ({ body: sampleState() }))
   try {
     const tree = await mount(mini, Panel)
-    const text = textOf(tree)
+    let text = textOf(tree)
     assert.match(text, /A frictional hysteresis model for metal rubber/)
     assert.match(text, /Multiscale fretting damage of metal rubber/)
-    // 结构化摘要字段
+    // 卡片默认只露「一句话结论」+ 质量徽章，六段细节收在「展开细节」后面。
+    // 这是「UI 更直接」的核心：列表页一屏能扫完，不用读六段文字。
     assert.match(text, /提出一种金属橡胶摩擦滞回模型/)
+    assert.doesNotMatch(text, /误差降低 38%/)
+    assert.match(text, /展开细节/)
+    buttonByText(tree, '展开细节').props.onClick()
+    mini.beginRender()
+    text = textOf(Panel({}))
+    // 展开后才看得到结构化摘要的细节字段
     assert.match(text, /误差降低 38%/)
     // 「摘要未提及」的字段不应该占位
     assert.doesNotMatch(text, /摘要未提及/)
@@ -374,6 +389,21 @@ test('面板首屏渲染出论文卡片、筛选条与摘要字段', async () =>
     assert.match(text, /LLM 未返回可解析的 JSON/)
     // 收藏星标与未读点
     assert.match(text, /★/)
+    // 质量徽章：没给 quality 的条目显示「待评估」
+    assert.match(text, /待评估/)
+    // 有 quality 的条目显示「高质量 · 79」与影响因子
+    assert.match(text, /高质量 · 79/)
+    assert.match(text, /影响因子 8\.5/)
+    // 「凭什么给这个分」默认收起，点质量徽章才展开
+    assert.doesNotMatch(text, /期刊影响因子 8\.5/)
+    buttonByText(tree, '高质量 · 79').props.onClick()
+    mini.beginRender()
+    text = textOf(Panel({}))
+    assert.match(text, /依据: 期刊影响因子 8\.5 · 被引 7 次 · 开放获取（可抓全文）/)
+    // 顶部状态条把「上次扫描 / 本次窗口 / 读过全文」摆在列表上方
+    assert.match(text, /上次扫描：/)
+    assert.match(text, /本次窗口 3 天/)
+    assert.match(text, /已读全文 1/)
     // 筛选条带计数
     assert.match(text, /全部\s*2/)
     assert.match(text, /未读\s*1/)

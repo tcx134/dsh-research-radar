@@ -20,6 +20,7 @@ Thumbs.db
 state.json
 radar-state.json
 
-# 不是本插件的数据：别的插件（AstrBot 系）会往当前工作目录写 data/，
+# 不是本插件的数据：别的插件（AstrBot 系）会往当前工作目录写 data/ 与 qq_autopilot/，
 # 本仓库刚好是 cwd，别让它混进提交
 data/
+qq_autopilot/

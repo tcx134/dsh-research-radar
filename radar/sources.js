@@ -409,6 +409,7 @@ function finalize(items, query, max, localFilter, spread = false) {
 
 /** 供测试使用：本地过滤 + 严格相关性判定是「推给我的文章不相关」的根因所在。 */
 export { finalize, isExcluded }
+export { getText, mailtoParam, stripTags, decodeXml }
 
 /* -------------------------------- OpenAlex ------------------------------- */
 
@@ -572,6 +573,10 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
       ? work.authorships.map((a) => String(a?.author?.display_name ?? '').trim()).filter(Boolean)
       : []
     const venue = String(work?.primary_location?.source?.display_name ?? '')
+    // 期刊 ISSN 是查「期刊影响因子 / h 指数」的钥匙，没有它就只能靠标题猜刊名。
+    const issn = String(work?.primary_location?.source?.issn_l ?? '')
+    // 开放获取论文的 PDF 直链 —— 有了它就能抓全文，而不是只喂摘要。
+    const oaPdfUrl = String(work?.best_oa_location?.pdf_url ?? '')
     const id = String(work?.id ?? '').split('/').pop()
     return {
       id: `openalex:${normalizeId(doi !== '' ? doi : id)}`,
@@ -582,9 +587,11 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
       url: doi !== '' ? `https://doi.org/${doi}` : String(work?.id ?? ''),
       abstract: invertAbstract(work?.abstract_inverted_index),
       venue,
+      issn,
       doi,
       citations: Number.isFinite(work?.cited_by_count) ? work.cited_by_count : 0,
       openAccess: work?.open_access?.is_oa === true,
+      oaPdfUrl,
     }
   })
 
@@ -673,7 +680,7 @@ export async function fetchCrossref({ query, max, api, lookbackDays = 30 }) {
   params.set('rows', String(Math.min(100, Math.max(20, max * 8))))
   params.set(
     'select',
-    'DOI,title,container-title,published,author,abstract,is-referenced-by-count,URL',
+    'DOI,title,container-title,ISSN,published,author,abstract,is-referenced-by-count,URL',
   )
   const mail = typeof api?.mailto === 'string' && api.mailto !== '' ? api.mailto : 'radar@example.com'
   params.set('mailto', mail)
@@ -695,6 +702,7 @@ export async function fetchCrossref({ query, max, api, lookbackDays = 30 }) {
       url: doi !== '' ? `https://doi.org/${doi}` : String(row?.URL ?? ''),
       abstract: stripTags(row?.abstract ?? ''),
       venue: String(row?.['container-title']?.[0] ?? ''),
+      issn: Array.isArray(row?.ISSN) ? String(row.ISSN[0] ?? '') : String(row?.ISSN ?? ''),
       doi,
       citations: Number.isFinite(row?.['is-referenced-by-count']) ? row['is-referenced-by-count'] : 0,
     }

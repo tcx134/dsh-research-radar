@@ -1,5 +1,7 @@
 import { collectFromSource, shouldSpread } from './sources.js'
-import { summarizePaper, normalizeSummaryDepth } from './summarize.js'
+import { summarizePaper, normalizeSummaryDepth, summaryDepthSpec } from './summarize.js'
+import { fetchFullText, condenseText, FULLTEXT_TIMEOUT_MS } from './fulltext.js'
+import { paperQuality } from './quality.js'
 import { sendMail, digestToHtml } from './mail.js'
 import { dedupeKeys } from './dedupe.js'
 
@@ -124,11 +126,27 @@ export async function mapLimit(list, limit, fn) {
 }
 
 /** 单篇摘要：失败重试一次，仍失败就只记 summaryError，不抛。 */
-async function summarizeOne(ctx, config, item, topic, depth) {
+async function summarizeOne(ctx, config, item, topic, depth, options = {}) {
+  const level = normalizeSummaryDepth(depth)
+  const spec = summaryDepthSpec(level)
+  // 先试着抓全文。拿不到不是错误 —— 摘要也能写，只是字段会更空。
+  let fullText = null
+  if (options.fullText !== false) {
+    try {
+      const fetched = await fetchFullText(item, { timeoutMs: FULLTEXT_TIMEOUT_MS })
+      if (fetched !== null) {
+        const text = condenseText(fetched.text, spec.fullTextChars)
+        fullText = { ...fetched, text }
+      }
+    } catch {
+      /* 全文抓取失败一律回退摘要 */
+    }
+  }
+
   let lastError = null
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      item.summary = await summarizePaper(ctx, config, item, topic, undefined, depth)
+      item.summary = await summarizePaper(ctx, config, item, topic, undefined, depth, fullText)
       item.summaryError = ''
       return null
     } catch (error) {
@@ -339,21 +357,56 @@ export async function runScan(ctx, config, store, options = {}) {
   // 对外报告用最宽的那个窗口（各方向可能不同：新方向 30 天，老方向 3 天）
   result.lookbackDays = usedLookbacks.length > 0 ? Math.max(...usedLookbacks) : null
 
+  /**
+   * 质量评估：期刊影响因子 / h 指数 / 被引 / 开放获取一起算成 0–100 分与档位。
+   * 关键词命中分（`score`）只能说明「像不像」，说明不了「值不值得读」——
+   * 一篇灌水期刊的论文标题塞满关键词就能排到顶刊前面，所以必须补外部信号。
+   *
+   * `options.journalCache` 是 ISSN → 指标 的磁盘缓存（index.js 里创建）。
+   * 新论文的期刊不在缓存里，所以要在这里再 ensure 一次 —— 索引里只有
+   * 已经入库的老论文，靠它预热不到本次新抓到的期刊。
+   */
+  let journals = options.journals ?? null
+  if (options.journalCache !== undefined && options.journalCache !== null) {
+    try {
+      await options.journalCache.ensure(
+        fresh.map((item) => item.issn),
+        settings.api,
+      )
+      journals = options.journalCache.asMap()
+    } catch {
+      /* 指标拿不到就退化成只看被引，不阻断扫描 */
+    }
+  }
+  for (const item of fresh) {
+    item.quality = paperQuality(item, { journals })
+  }
+  result.qualityTiers = { high: 0, medium: 0, low: 0, unknown: 0 }
+  for (const item of fresh) {
+    const tier = item.quality?.tier
+    if (tier !== undefined && result.qualityTiers[tier] !== undefined) result.qualityTiers[tier] += 1
+  }
+
   // 逐篇生成结构化摘要（限流并发；失败不阻断其它论文，单篇最多重试一次）
   // 解析深度决定字段数、摘要截断长度和输出上限，直接关系到每次扫描烧多少 token
   // options.summaryDepth 可临时覆盖设置（Agent 一次性精读某批论文时用）
   const depth = normalizeSummaryDepth(options.summaryDepth ?? settings.scan.summaryDepth)
   result.summaryDepth = depth
+  // 抓全文再总结：默认开（比只看摘要准得多），可在设置里关掉换速度。
+  // options.fullText 显式传入时优先（测试与「只想快点看摘要」时用）。
+  const useFullText = options.fullText === undefined ? settings.scan.fullText !== false : options.fullText !== false
   if (settings.scan.summarize && fresh.length > 0) {
     const topicById = new Map(targets.map((t) => [t.id, t]))
     const failures = await mapLimit(fresh, SUMMARY_CONCURRENCY, (item) =>
-      summarizeOne(ctx, config, item, topicById.get(item.topicId) ?? {}, depth),
+      summarizeOne(ctx, config, item, topicById.get(item.topicId) ?? {}, depth, { fullText: useFullText }),
     )
     for (let index = 0; index < failures.length; index += 1) {
       if (failures[index] === null) continue
       result.errors.push({ topic: fresh[index].topicName, source: 'summary', message: failures[index] })
     }
   }
+  // 本次有多少篇真的读到了全文 —— 面板与邮件要显示，用户才知道质量提升从哪来
+  result.fullTextCount = fresh.filter((item) => item.summary?.basis === 'fulltext').length
 
   await store.mutate((draft) => {
     for (const item of fresh) {

@@ -64,7 +64,12 @@
 - ✅ **时间范围可选 + 回溯检索**（`lookbackDays` 上限放宽到 3650 天，面板有半年 / 1 年 / 2 年 / 3 年快捷按钮，
   「回溯检索」按钮用当前窗口强制扫一次，跳过增量窗口）
 - ✅ **连字符变体折叠 + Crossref 改相关度排序 + 窗口下限 30 天**（2026-10-23 修掉「检索得太少」的三个根因，见 11.14）
-- ✅ **196 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **质量分**（期刊影响因子 70% + 年化被引 30% + 开放获取 4 分 → 0–100 + 高/中/低/待评估，
+  卡片徽章可点开看「依据」，见 11.15）
+- ✅ **全文精读**（arXiv / Europe PMC / OA PDF / 出版社 PDF 四条路线，拿到正文就按正文总结，
+  拿不到自动回退摘要，见 11.15）
+- ✅ **面板更直接**（标题回到第一行、质量分与「凭什么」可展开、顶部状态条、六段细节默认收起，见 11.15）
+- ✅ **221 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -87,19 +92,21 @@ SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
 I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
-├── index.js       782 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     2098 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── index.js       816 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
+├── client.js     2339 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
-│   ├── store.js    371 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
-│   ├── sources.js 1034 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开 + 连字符折叠
-│   ├── summarize.js 256 行 LLM 结构化摘要（三档解析深度）
-│   ├── mail.js     544 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
-│   ├── scan.js     419 行 扫描编排（增量窗口 + 并发摘要）+ 摘要邮件正文
+│   ├── store.js    393 行 JSON 持久化（配置 / 已读去重 / seen 剪枝 / 摘要缓存）
+│   ├── sources.js 1042 行 六源抓取 + 相关性打分 + strict 判定 + 语言过滤 + 年份摊开 + 连字符折叠
+│   ├── summarize.js 315 行 LLM 结构化摘要（三档解析深度，支持喂全文）
+│   ├── mail.js     581 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
+│   ├── scan.js     472 行 扫描编排（增量窗口 + 全文抓取 + 并发摘要）+ 摘要邮件正文
+│   ├── quality.js  278 行 质量分（期刊影响因子 / 年化被引 / 开放获取 → 0–100 + 档位）
+│   ├── fulltext.js 538 行 全文抓取（arXiv / Europe PMC / OA PDF / 出版社 PDF → 纯文本）
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
-│   └── library.js  156 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
-├── test/                 16 个文件 / 196 个用例（node:test，零依赖）
+│   └── library.js  165 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
+├── test/                 18 个文件 / 221 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -123,11 +130,11 @@ export function apply(ctx, config) { ... }
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/state` | 方向 + 分页条目 + 脱敏设置 + 源标签 + 解析深度档位 + 状态 |
+| GET | `/state` | 方向 + 分页条目 + 脱敏设置 + 源标签 + 解析深度档位 + 质量档位 + 状态（`?limit=&offset=&topicId=&filter=&sort=`） |
 | POST | `/topics` | `{op:'upsert'\|'delete', topic}` |
 | POST | `/settings` | patch `scan` / `mail` / `rss` / `api`；`pass` 传回 `********` 视为不改 |
 | POST | `/preview` | **试检索**，不写库不摘要不去重 |
-| POST | `/scan` | `{topicIds?, lookbackDays?}` → `{ok, newCount, lookbackDays, summaryDepth, errors, mail, items, state}` |
+| POST | `/scan` | `{topicIds?, lookbackDays?, summaryDepth?}` → `{ok, newCount, lookbackDays, summaryDepth, qualityTiers, fullTextCount, errors, mail, items, state}` |
 | POST | `/item` | 改 `read` / `starred` |
 | POST | `/mark-all-read` | 全部标为已读 |
 | GET | `/stats` | 趋势统计（`?days=&topicId=`） |
@@ -1301,6 +1308,141 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
    当前 `fetchBiorxiv` 已把窗口夹到 `Math.min(days, 180)`，但 63 秒仍然过分 —— 下次要给它单独加超时或缓存。
 3. **`newCount` 不在 `runScan` 的 result 上**。result 只有 `newItems`，`newCount` 是 `index.js` 里
    `result.newItems.length` 现算的。写调试脚本时直接读 `r.newCount` 会得到 `undefined`（被 JSON.stringify 吞掉）。
+
+### 11.15 质量分 + 全文精读 + 面板更直接（2026-10-27）
+
+用户反馈（m04426）：「不用太依赖摘要进行文章理解，应该可以根据论文得分区、影响因子等元素判断文章
+是否具有较高的质量，如果可以获得文章的全文，则应该根据文章的全文进行阅读理解与总结。另外，UI 设计
+应该更加直接一点，让用户能够更加容易理解。」
+
+三件事分别对应下面三节。
+
+#### 11.15.1 质量分（`radar/quality.js`，278 行）
+
+数据源只有 OpenAlex 一家够用：`sources` 接口的 `summary_stats` 里有 `2yr_mean_citedness`（与 JCR
+影响因子同源）、`h_index`、`i10_index`。
+
+**实测契约**（2026-10-27）：
+
+| 探针 | 结果 |
+| --- | --- |
+| `sources?filter=display_name.search:Thin-Walled Structures` | `{"id":"S205118121","stats":{"2yr_mean_citedness":8.512673112098248,"h_index":154,"i10_index":7765},"works":12375,"type":"journal"}` |
+| 批量 `filter=issn:0263-8231\|0997-7538\|0013-7944\|0267-7261` | 200，4 条全中（`issn_l:` 同样可用） |
+| `works` 接口的 `primary_location.source` | **不含 `summary_stats`**（只有 display_name / issn_l / is_oa / is_core 等）→ 必须单独查 `sources` 并缓存 |
+| `filter=doi:10.x\|10.y` | **400** `"It looks like you're trying to do an OR query between filters and it's not supported... Problem value: 10.1016/...\|doi:10.1016/..."`；正确写法 `doi:<a>\|doi:<b>` |
+| `issn_l` 精确匹配的必要性 | `9999-9999` 会被 OpenAlex 模糊匹配到 `Space Resolver 16`（IF 0 / h1）→ 必须按 `issn_l` 相等过滤 |
+
+**打分公式**（`paperQuality()`）：期刊 **70%** + 年化被引 **30%**，开放获取再 **+4**。
+
+- 期刊分用**对数曲线**：`Math.min(100, Math.round((Math.log10(1 + min(IF, 30)) / Math.log10(11)) * 100))`。
+  实测 IF 0.5 → 17、1 → 29、2 → 46、3 → 58、5 → 75、8.5 → 94、≥10 → 100。
+  **为什么不用线性**：线性（`IF / 20 * 100`）把 IF 5 判成 25 分、IF 8.5 判成 42 分，工程领域主流好刊
+  全被打成「低质量」，用户会觉得这个分没用。对数曲线让「IF 3 以上」就进入 58 分以上，符合直觉。
+  没有 IF 时用 h 指数兜底，**封顶 60**（不能和真影响因子平起平坐）。
+- 被引按**年化**算（`citations / max(years, 0.25)`），年化 20 次 = 100 分。新论文被引天然少，
+  不年化会让「刚发表的顶刊论文」永远拿低分。
+- 档位：`score >= 60 → high`、`>= 35 → medium`、否则 `low`；**期刊与被引都拿不到时是 `unknown`**，
+  不是 `low` —— 没见过不等于差。
+- `reasons` 是给人看的中文短语（`期刊影响因子 8.5` / `被引 30 次` / `开放获取（可抓全文）` /
+  `核心期刊` / `未识别到期刊` / `期刊指标未收录`），面板点徽章就展开这些。
+
+**实测校准**（4 组）：顶刊 IF8.5 被引30 OA → **97 分 high**；好刊 IF5.7 被引0 OA → **59 分 medium**；
+一般 IF2.6 被引6 OA → **47 分 medium**；低 IF0.6 被引5 → **17 分 low**。
+
+**期刊缓存**（`createJournalCache({dir})`）：文件 `journals.json`，形如
+`{version:1, entries:{issn:{name,twoYearMeanCitedness,hIndex,...,fetchedAt}}}`；只拉缺失或超 30 天的，
+**查不到的也写 `{missing:true, fetchedAt}`** —— 否则每轮扫描都会重试那批冷门期刊。
+必须预热：`runScan` 里先 `await journalCache.ensure(fresh.map(i => i.issn), settings.api)` 再
+`asMap()`，因为索引里只有老论文，靠它预热不到本次新抓到的期刊。
+
+#### 11.15.2 全文精读（`radar/fulltext.js`，538 行）
+
+**四条路线**，按「拿到全文的概率 × 速度」排序：
+
+| 路线 | 做法 | 实测 |
+| --- | --- | --- |
+| `arxiv` | `https://arxiv.org/html/<id>` | 200 / 187989B / **1.7s**，抽出 **38355 字** |
+| `europepmc` | `search?query=DOI:"<doi>"` 取 `pmcid` → `/<pmcid>/fullTextXML` | 102890B / 1.8s，抽出 **28386 字** |
+| `oa-pdf` | OpenAlex `best_oa_location.pdf_url` | 378887B / 9.7s，抽出 **27596 字** |
+| `publisher-pdf` | DOI 落地页的 `citation_pdf_url`，或已知域名直接拼 `/pdf` | 覆盖率最高，实测救回一批 OpenAlex 没标 pdf_url 的论文 |
+
+**踩过的坑**：
+
+1. **arXiv 必须按 `</article>` 截断**。正文在 `<article>` 内（起始偏移 20186），`</article>` 在 180059，
+   之后是 `<footer class="arxiv-html-footer">` 版权与 Accessibility 垃圾。
+2. **Europe PMC 的 UA**。用 `dsh-research-radar/1.0` 会 `TypeError: fetch failed`，必须
+   `Mozilla/5.0 dsh-research-radar/1.0` 或走 `getText` 的 UA。
+3. **PDF 抽文本不能只捞 `(...)`**。第一版把 content stream 里所有字面量串起来，MDPI 的 PDF 抽出
+   **5,134,343 字**且 `looksLikeProse=false` —— PDF 里单词间的空格常常不是字符，而是 `TJ` 数组里的
+   **字距偏移**（`[(Word)-280(another)] TJ`）。修法：遇到 `TJ` 数组时按数值补空格（`<= -100` 补空格，
+   `<= -1000` 补两个），并且只处理含 `\bT[Jj]\b` 的 stream chunk。
+4. **`</p><p>` 会变成 `\n Second`**（带前导空格），断言 `First paragraph.\nSecond paragraph.` 失败。
+   `htmlToText` 里要 `.replace(/ *\n */g, '\n')`。
+5. **正文里残留命名实体**（`&middot;`）会污染可读性检查，要补一条
+   `/&[a-zA-Z][a-zA-Z0-9]{1,10};/g` 清掉。
+6. **订阅制出版社要快速失败**。Elsevier 的 `linkinghub.elsevier.com` 对 `10.1016/*` 返回 **200 但只有壳页**，
+   正文要登录 —— 这是「DOI 标了 OA 但实际下不到」的典型。`CLOSED_HOSTS` 里列了
+   Elsevier / ScienceDirect / IEEE / ACM / ACS / T&F / ASCE / ASME，命中就直接返回 null，
+   不再白等一次必然失败的下载。
+7. **doi.org 在本机偶发连不上**：同一 DOI 第一次 `fetch failed`（5ms 就失败），隔 1.2 秒重试就通。
+   `resolveDoiLanding` 加了「失败重试一次」。
+8. **总预算要跨路线共享**。原来每条路线各自 `timeoutMs: 25000`，最坏情况 4 条路线 = 100 秒。
+   现在 `fetchFullText` 算一个 `deadline`，每条路线拿 `remaining`，**剩不到 2 秒就放弃**。
+
+**截断策略**（`condenseText`）：**保头 55% + 保尾 45%**，中间插
+`\n\n……（正文中段已省略 N 字）……\n\n`。保尾是因为结论、局限都在文末。按档位截断：
+精简 4000 字 / 标准 12000 字 / 深度 20000 字（`DEPTH_SPECS.fullTextChars`）。
+
+**摘要 prompt 的分支**（`buildSystemPrompt(depth, hasFullText)`）：有全文时开头写明「你拿到的是论文
+**正文**（可能截断过中段）」，并要求「方法 / 实验 / 数据必须来自正文；中段被省略时不要假设，关键信息
+缺失写『正文未提及』」。摘要结果写 `summary.basis = 'fulltext' | 'abstract'`，有全文时还写
+`fullTextSource` / `fullTextUrl` / `fullTextChars`。
+
+**实测成功率**（「金属橡胶」10 篇候选，真实网络）：加 `publisher-pdf` 之前 **1/10**，之后 **3–4/10**，
+平均每篇 12.5 秒。用户库 33 篇里 14 篇标了开放获取（**42%**），这是全文获取率的上限参考。
+拿不到的（Elsevier / 中文期刊 / 没 DOI）自动回退摘要，**不算错误**。
+
+**开关**：`settings.scan.fullText`（默认 `true`），面板设置页有「能拿到全文时按全文总结（更准，但慢一些）」
+复选框。关掉能明显加快扫描。
+
+#### 11.15.3 面板更直接
+
+用户说「UI 设计应该更加直接一点」，具体改了四处：
+
+1. **标题回到第一行**。原来 `topRow`（质量分 + 影响因子 + 被引 + 全文 + OA + 星标 + 日期，最多 7 个徽章）
+   压在标题上面，用户在列表里找的明明是标题，却要先扫一排小字。现在拆成
+   `titleRow`（未读点 + 标题 + 收藏星）+ `qualityRow`（质量分 + 影响因子 + 被引 + 全文/仅摘要 + OA + 日期）。
+2. **质量分可点开看「凭什么」**。徽章从 `<span>` 改成 `<button>`（`.drr-q-btn`），点一下展开
+   `依据: 期刊影响因子 8.5 · 被引 7 次 · 开放获取（可抓全文）`（`.drr-why`）。默认收起，不占版面。
+3. **顶部状态条**（`.drr-strip`）。把「上次扫描 / 本次窗口 N 天 / 新增 N / 已读全文 N / 高质量 N」
+   从设置页搬到论文列表顶上 —— 这些是每次打开面板最想先知道的事，藏在设置里等于没有。
+   左边一个小圆点：绿=空闲、琥珀+呼吸动画=正在扫描。右边是档位图例
+   `高质量 ≥60 · 中等 ≥35 · 较低 <35`，用户不用记刻度。
+4. **六段细节默认收起**（沿用 11.15 之前的改动）。卡片先给「标题 + 一句话结论 + 质量」，
+   想看再点「展开细节」。
+
+#### 11.15.4 测试
+
+| 文件 | 用例数 | 新增内容 |
+| --- | --- | --- |
+| `test/quality.test.js` | 9 | normalizeIssn / 对数曲线边界 / 年化被引 / 四档判定 / 脏输入 / 批量查 ISSN / 上游失败 / 期刊缓存命中与过期 |
+| `test/fulltext.test.js` | 15 | arXiv 编号识别 / HTML 转文本 / PMC body 抽取 / PDF 抽取 / 非 PDF 安全 / 可读性判定 / 截断 / 四条路线回退 / 限定路线 / `citation_pdf_url` / 域名拼 `/pdf` / 订阅制快速失败 / 预算共享 |
+| `test/scan.test.js` | 20 | 新增「按设置决定是否抓全文」（关掉时只发 1 个 RSS 请求，不碰 doi.org） |
+| `test/store.test.js` | 9 | 默认值加 `fullText: true` |
+| `test/client-smoke.test.js` | 17 | 新增质量徽章「高质量 · 79」/ 影响因子 / 点开「依据」/ 顶部状态条断言 |
+
+合计 **221 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 4.4 秒）。
+
+#### 11.15.5 本次踩的坑
+
+1. **单测里 `throw new Error('network down')` 会白等 32 秒**。`getText` 对可重试错误走
+   4s / 9s / 18s 退避 —— 模拟上游失败要返回 **404**（不可重试），耗时降到 1.1 秒。
+2. **极简 React 替身的 `useState` 槽位要按组件分帧**（11.12 已记）。这次加 `whyOpen` 又踩了一次：
+   `ItemCard` 的两个 `useState` 如果和 `Panel` 共用游标，点质量徽章会把 Panel 的 state 改掉。
+3. **PDF 必须按 `latin1` 解码，不能用 `utf8`**。content stream 里的字面量是字节串，用 `utf8` 解会把
+   高位字节变成 `U+FFFD`，`looksLikeProse` 直接判失败。`pdfToText` 全程用 `buf.toString('latin1')`。
+4. **改 UI 后必须跑 client-smoke**。卡片结构从 `topRow + metaRow + title` 变成
+   `titleRow + qualityRow + whyLine + metaRow`，所有基于文本顺序的断言都要重新对一遍。
 
 
 
