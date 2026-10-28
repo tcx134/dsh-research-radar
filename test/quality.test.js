@@ -15,6 +15,7 @@ import {
   normalizeIssn,
   paperQuality,
   quartileOf,
+  resolveIssnsByDoi,
 } from '../radar/quality.js'
 
 test('normalizeIssn 认得出各种写法，认不出返回空串', () => {
@@ -282,4 +283,58 @@ test('期刊缓存：命中缓存不重复请求，过期才刷新，查不到�
   // asMap 给出可直接喂给 paperQuality 的 Map
   const map = cache.asMap()
   assert.equal(map.get('0263-8231').hIndex, 154)
+})
+
+test('resolveIssnsByDoi 用一次请求查回多个 DOI 的 ISSN', async (t) => {
+  const original = globalThis.fetch
+  const urls = []
+  globalThis.fetch = async (url) => {
+    urls.push(String(url))
+    const payload = {
+      results: [
+        {
+          doi: 'https://doi.org/10.1016/j.tws.2026.115741',
+          primary_location: { source: { issn_l: '0263-8231' } },
+        },
+        {
+          // DOI 回来时大小写混杂，也要能对上
+          doi: 'https://doi.org/10.3390/POLYM1613045',
+          primary_location: { source: { issn_l: '2073-4360' } },
+        },
+      ],
+    }
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) }
+  }
+  t.after(() => {
+    globalThis.fetch = original
+  })
+
+  const out = await resolveIssnsByDoi(
+    [
+      '10.1016/j.tws.2026.115741',
+      'https://doi.org/10.3390/polym1613045',
+      'doi:10.1016/j.tws.2026.115741',
+      '',
+      null,
+    ],
+    {},
+  )
+  assert.deepEqual(out, {
+    '10.1016/j.tws.2026.115741': '0263-8231',
+    '10.3390/polym1613045': '2073-4360',
+  })
+  // 去重后只剩两个 DOI，且 OR 查询只能写一次字段前缀（`doi:a|b`）
+  assert.equal(urls.length, 1)
+  const filter = decodeURIComponent(new URL(urls[0]).searchParams.get('filter'))
+  assert.ok(filter.startsWith('doi:'))
+  assert.equal(filter.split('doi:').length, 2)
+})
+
+test('resolveIssnsByDoi 上游报错时返回空对象，不抛错', async (t) => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => '{"error":"bad"}' })
+  t.after(() => {
+    globalThis.fetch = original
+  })
+  assert.deepEqual(await resolveIssnsByDoi(['10.1/x'], {}), {})
 })

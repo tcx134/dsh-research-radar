@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { mapLimit, resolvePanelUrl, effectiveLookbackDays, runScan } from '../radar/scan.js'
+import { mapLimit, resolvePanelUrl, effectiveLookbackDays, runScan, backfillQuality, ensureIssns } from '../radar/scan.js'
 import { createStore } from '../radar/store.js'
 import { tempDir, seedState } from './helpers.js'
 
@@ -306,4 +306,245 @@ test('runScan 按设置决定是否抓全文', async (t) => {
   // 只取了 RSS，没有为了全文再发任何请求
   assert.equal(requested.filter((u) => u.includes('doi.org')).length, 0)
   assert.equal(requested.length, 1)
+})
+
+/** 老库：两条论文没有 quality（升级前入库的），一条已经有了。 */
+async function storeWithOldItems(t) {
+  const dir = await tempDir(t)
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'openalex:old-1',
+        title: 'Metal rubber isolator',
+        issn: '0263-8231',
+        publishedAt: '2024-05-01',
+        citations: 30,
+        openAccess: true,
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+      {
+        id: 'openalex:old-2',
+        title: 'Metal rubber damper',
+        issn: '0000-0000',
+        publishedAt: '2025-01-01',
+        citations: 0,
+        discoveredAt: '2026-10-02T00:00:00.000Z',
+      },
+      {
+        id: 'openalex:done',
+        title: 'Already scored',
+        quality: { score: 42, tier: 'medium' },
+        discoveredAt: '2026-10-03T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  return { dir, store: createStore({}, { dataDir: dir }) }
+}
+
+test('backfillQuality 给缺质量分的老论文补上并落盘', async (t) => {
+  const { store } = await storeWithOldItems(t)
+  const filled = await backfillQuality(store, { journals: null })
+  assert.equal(filled, 2)
+
+  const state = await store.load()
+  const byId = new Map(state.items.map((item) => [item.id, item]))
+  // 没有期刊指标时只看被引，但仍然是有效分数（不是 null）
+  assert.equal(typeof byId.get('openalex:old-1').quality.score, 'number')
+  assert.equal(typeof byId.get('openalex:old-2').quality.tier, 'string')
+  // 已经有的那条不能被覆盖
+  assert.equal(byId.get('openalex:done').quality.score, 42)
+})
+
+test('backfillQuality 幂等：跑第二次什么都不做', async (t) => {
+  const { store } = await storeWithOldItems(t)
+  assert.equal(await backfillQuality(store, {}), 2)
+  assert.equal(await backfillQuality(store, {}), 0)
+})
+
+test('backfillQuality 会用期刊缓存里的影响因子', async (t) => {
+  const { store } = await storeWithOldItems(t)
+  const journals = new Map([
+    ['0263-8231', { name: 'Thin-Walled Structures', twoYearMeanCitedness: 8.51, hIndex: 154 }],
+  ])
+  await backfillQuality(store, { journals })
+  const state = await store.load()
+  const item = state.items.find((entry) => entry.id === 'openalex:old-1')
+  assert.equal(item.quality.impactFactor, 8.51)
+  assert.equal(item.quality.tier, 'high')
+  assert.ok(item.quality.reasons.some((reason) => reason.includes('影响因子')))
+})
+
+test('backfillQuality 遇到空库返回 0', async (t) => {
+  const dir = await tempDir(t)
+  await seedState(dir, { version: 1, topics: [], items: [], seen: {}, settings: {} })
+  const store = createStore({}, { dataDir: dir })
+  assert.equal(await backfillQuality(store, {}), 0)
+})
+
+/** 老库：只有 DOI、没有 ISSN（升级前入库的真实形态）。 */
+async function storeWithDoiOnly(t) {
+  const dir = await tempDir(t)
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'crossref:10.1016/j.tws.2026.115741',
+        title: 'Metal rubber isolator',
+        doi: '10.1016/j.tws.2026.115741',
+        venue: 'Thin-Walled Structures',
+        publishedAt: '2025-05-01',
+        citations: 12,
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  return { dir, store: createStore({}, { dataDir: dir }) }
+}
+
+test('ensureIssns 用 DOI 给缺 ISSN 的论文补上期刊编号', async () => {
+  const items = [
+    { id: 'a', doi: '10.1016/j.tws.2026.115741' },
+    { id: 'b', doi: 'https://doi.org/10.3390/polym1613045' },
+    { id: 'c', doi: '', issn: '1234-567X' },
+    { id: 'd' },
+  ]
+  const asked = []
+  const filled = await ensureIssns(items, {
+    issnResolver: async (dois) => {
+      asked.push(...dois)
+      return {
+        '10.1016/j.tws.2026.115741': '0263-8231',
+        '10.3390/polym1613045': '2073-4360',
+      }
+    },
+  })
+  // 只有前两条需要补（第三条已有 ISSN、第四条没 DOI）
+  assert.deepEqual(asked, ['10.1016/j.tws.2026.115741', 'https://doi.org/10.3390/polym1613045'])
+  assert.equal(filled, 2)
+  assert.equal(items[0].issn, '0263-8231')
+  assert.equal(items[1].issn, '2073-4360')
+  assert.equal(items[2].issn, '1234-567X')
+  assert.equal(items[3].issn, undefined)
+})
+
+test('ensureIssns 全部有序号时不发请求', async () => {
+  let called = 0
+  const filled = await ensureIssns(
+    [
+      { id: 'a', issn: '0263-8231' },
+      { id: 'b', issn: '2073-4360' },
+    ],
+    {
+      issnResolver: async () => {
+        called += 1
+        return {}
+      },
+    },
+  )
+  assert.equal(filled, 0)
+  assert.equal(called, 0)
+})
+
+test('ensureIssns 上游抛错时安全返回 0', async () => {
+  const items = [{ id: 'a', doi: '10.1/x' }]
+  const filled = await ensureIssns(items, {
+    issnResolver: async () => {
+      throw new Error('network down')
+    },
+  })
+  assert.equal(filled, 0)
+  assert.equal(items[0].issn, undefined)
+})
+
+test('backfillQuality 会给缺 ISSN 的老论文补 ISSN 并落盘', async (t) => {
+  const { store } = await storeWithDoiOnly(t)
+  const journals = new Map([
+    ['0263-8231', { name: 'Thin-Walled Structures', twoYearMeanCitedness: 8.51, hIndex: 154 }],
+  ])
+  await backfillQuality(store, {
+    journals,
+    issnResolver: async () => ({ '10.1016/j.tws.2026.115741': '0263-8231' }),
+  })
+
+  const state = await store.load()
+  const item = state.items[0]
+  // ISSN 补上了，而且写进了 state（下次不用重查）
+  assert.equal(item.issn, '0263-8231')
+  // 有了 ISSN 才能查到影响因子，质量分才是真的高
+  assert.equal(item.quality.impactFactor, 8.51)
+  assert.equal(item.quality.tier, 'high')
+})
+
+/**
+ * 用户库里的真实形态：论文在「影响因子」上线前扫进来，`quality` 已经算过
+ * 但那轮没有 ISSN，只能按被引打分。这种也必须重算，否则影响因子永远补不上。
+ */
+test('backfillQuality 会重算「有分数但缺 ISSN」的论文', async (t) => {
+  const dir = await tempDir(t)
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'crossref:10.1016/j.tws.2025.1',
+        title: 'Metal rubber isolator',
+        doi: '10.1016/j.tws.2025.1',
+        publishedAt: '2025-05-01',
+        citations: 0,
+        // 旧分数：只按被引算过，没有期刊信号
+        quality: { score: 42, tier: 'medium', reasons: ['被引 0 次'], impactFactor: null },
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  const store = createStore({}, { dataDir: dir })
+  const journals = new Map([['0263-8231', { twoYearMeanCitedness: 8.51, hIndex: 154 }]])
+
+  const filled = await backfillQuality(store, {
+    journals,
+    issnResolver: async () => ({ '10.1016/j.tws.2025.1': '0263-8231' }),
+  })
+  assert.equal(filled, 1)
+
+  const state = await store.load()
+  const item = state.items[0]
+  assert.equal(item.issn, '0263-8231')
+  assert.equal(item.quality.impactFactor, 8.51)
+  assert.equal(item.quality.tier, 'high')
+  assert.ok(item.quality.score > 42, `重算后分数应高于旧的 42，实际 ${item.quality.score}`)
+})
+
+test('backfillQuality 不会因为补不到 ISSN 就抹掉已有分数', async (t) => {
+  const dir = await tempDir(t)
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'crossref:10.1/unknown',
+        title: 'Unknown venue paper',
+        doi: '10.1/unknown',
+        citations: 5,
+        quality: { score: 42, tier: 'medium', impactFactor: null },
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  const store = createStore({}, { dataDir: dir })
+  // 反查什么都查不到
+  assert.equal(await backfillQuality(store, { issnResolver: async () => ({}) }), 0)
+  const state = await store.load()
+  assert.equal(state.items[0].quality.score, 42)
+  assert.equal(state.items[0].issn ?? '', '')
 })

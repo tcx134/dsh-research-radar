@@ -275,6 +275,61 @@ export async function fetchJournalMetrics(issns, api) {
 }
 
 /**
+ * 从 DOI 反查期刊 ISSN。
+ *
+ * 为什么需要：`issn` 是后加的字段，升级前入库的论文只有 DOI 没有 ISSN，
+ * 于是它们的质量分永远算不出期刊信号（面板上一片「待评估」）。OpenAlex 的
+ * works 接口能按 DOI 批量查回 `primary_location.source.issn_l`。
+ *
+ * **`|` OR 查询只能写一次字段前缀**：`filter=doi:a|doi:b` 会报 400
+ * （`It looks like you're trying to do an OR query between filters`），
+ * 正确写法是 `filter=doi:a|b`。实测两个 DOI 一次查回 1 条命中。
+ *
+ * @param {string[]} dois
+ * @param {{mailto?: string}} [api]
+ * @returns {Promise<Record<string, string>>} 小写 DOI → ISSN
+ */
+export async function resolveIssnsByDoi(dois, api) {
+  const unique = []
+  const seen = new Set()
+  for (const value of Array.isArray(dois) ? dois : []) {
+    const doi = String(value ?? '')
+      .trim()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+      .replace(/^doi:\s*/i, '')
+      .toLowerCase()
+    if (doi === '' || seen.has(doi)) continue
+    seen.add(doi)
+    unique.push(doi)
+  }
+
+  const out = {}
+  for (let i = 0; i < unique.length; i += ISSN_BATCH) {
+    const chunk = unique.slice(i, i + ISSN_BATCH)
+    const url =
+      'https://api.openalex.org/works?filter=' +
+      encodeURIComponent(`doi:${chunk.join('|')}`) +
+      '&select=doi,primary_location&per-page=50' +
+      mailtoParam(api)
+    let payload
+    try {
+      payload = JSON.parse(await getText(url))
+    } catch {
+      continue
+    }
+    for (const work of Array.isArray(payload?.results) ? payload.results : []) {
+      const doi = String(work?.doi ?? '')
+        .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+        .toLowerCase()
+      const issn = normalizeIssn(work?.primary_location?.source?.issn_l ?? '')
+      if (doi === '' || issn === '') continue
+      out[doi] = issn
+    }
+  }
+  return out
+}
+
+/**
  * 期刊指标磁盘缓存。指标变化很慢（一个月一次足够），没必要每轮扫描都请求。
  * 文件放在 dataDir 下，跟 state.json 同级。
  */
@@ -317,6 +372,8 @@ export function createJournalCache({ dir }) {
 
   return {
     file,
+    /** 读一次磁盘缓存（幂等）。想用 asMap() 前先 await 它。 */
+    load,
     /** 同步查找（调用前需已 ensure()）。 */
     get(issn) {
       const key = normalizeIssn(issn)

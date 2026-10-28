@@ -1,12 +1,12 @@
 import { createStore } from './radar/store.js'
 import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays } from './radar/scan.js'
+import { createJournalCache, QUALITY_TIERS, paperQuality } from './radar/quality.js'
 import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
 import { buildLibrary } from './radar/library.js'
 import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
-import { createJournalCache, QUALITY_TIERS } from './radar/quality.js'
 import path from 'node:path'
 
 export const name = 'dsh-research-radar'
@@ -189,12 +189,36 @@ export function apply(ctx, config) {
   let lastError = ''
 
   /**
+   * 给一条论文取质量分。
+   *
+   * 质量分是后加的功能，升级前入库的论文 `quality` 是 null，面板上会全是「待评估」。
+   * 这里用**磁盘上已有的**期刊指标现算一个兜底值（只读、不发网络请求、不写 state）：
+   * 老论文的期刊绝大部分在前几轮扫描里已经缓存过，够用；真缺指标的也会在下一次
+   * `runScan` 的 `backfillQuality` 里补上并落盘。
+   */
+  function qualityOf(item, journals) {
+    if (item.quality !== null && typeof item.quality === 'object') return item.quality
+    return paperQuality(item, { journals })
+  }
+
+  /**
    * 组装面板要的状态。`query` 支持 limit / offset / topicId / filter，
    * 不传时按默认第一页返回。
    */
   async function publicState(query = {}) {
     const state = await store.load()
-    const page = paginateItems(state.items, query)
+    // 老论文缺 quality 时要用期刊缓存现算，先把缓存读进来（只读一次，失败也不阻断）
+    try {
+      await journalCache.load()
+    } catch {
+      /* 缓存读不到就退化成只看被引 */
+    }
+    const journals = journalCache.asMap()
+    const withQuality = state.items.map((item) => {
+      const quality = qualityOf(item, journals)
+      return quality === item.quality ? item : { ...item, quality }
+    })
+    const page = paginateItems(withQuality, query)
     // 增量窗口按方向算（radar/scan.js 里 lastScanAt 记在方向上）。面板只需要一个
     // 代表性数字，取所有启用方向里最宽的那个 —— 也就是「这次最多往回看多少天」。
     const enabledTopics = state.topics.filter((t) => t.enabled !== false)
@@ -210,7 +234,7 @@ export function apply(ctx, config) {
         unread: state.items.filter((i) => i.read !== true).length,
         starred: state.items.filter((i) => i.starred === true).length,
         // 高质量论文数 —— 面板顶部直接显示「这周有 N 篇值得读」
-        highQuality: state.items.filter((i) => i.quality?.tier === 'high').length,
+        highQuality: withQuality.filter((i) => i.quality?.tier === 'high').length,
         fullText: state.items.filter((i) => i.summary?.basis === 'fulltext').length,
       },
       settings: { ...state.settings, mail: maskMailSettings(state.settings.mail) },

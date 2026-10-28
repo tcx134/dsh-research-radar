@@ -1,7 +1,7 @@
 import { collectFromSource, shouldSpread } from './sources.js'
 import { summarizePaper, normalizeSummaryDepth, summaryDepthSpec } from './summarize.js'
 import { fetchFullText, condenseText, FULLTEXT_TIMEOUT_MS } from './fulltext.js'
-import { paperQuality } from './quality.js'
+import { paperQuality, normalizeIssn, resolveIssnsByDoi } from './quality.js'
 import { sendMail, digestToHtml } from './mail.js'
 import { dedupeKeys } from './dedupe.js'
 
@@ -195,6 +195,124 @@ export function selectFresh(candidates, seen = {}) {
 }
 
 /**
+ * 给缺 ISSN 的论文补上期刊编号。
+ *
+ * 为什么要单独做：`issn` 是后加的字段，来源也不一定给 —— Crossref / OpenAlex
+ * 有，RSS / PubMed / arXiv 就没有；升级前入库的老论文更是全都没有。缺 ISSN
+ * 就意味着查不到影响因子，质量分只能半瞎算（面板上整片「待评估」）。
+ * 这些论文普遍带着 DOI，用 DOI 反查 OpenAlex 就能补回来。
+ *
+ * 补到的 ISSN 会写回 `item.issn`，调用方负责落盘。
+ *
+ * @param {object[]} items
+ * @param {{issnResolver?: (dois: string[], api: object) => Promise<Record<string, string>>, api?: object}} [options]
+ * @returns {Promise<number>} 补了多少篇
+ */
+export async function ensureIssns(items, options = {}) {
+  const list = Array.isArray(items) ? items : []
+  const pending = list.filter(
+    (item) => item !== null && typeof item === 'object' && normalizeIssn(item.issn ?? '') === '' && String(item.doi ?? '') !== '',
+  )
+  if (pending.length === 0) return 0
+
+  const resolver = typeof options.issnResolver === 'function' ? options.issnResolver : resolveIssnsByDoi
+  let found = {}
+  try {
+    found = await resolver(
+      pending.map((item) => item.doi),
+      options.api ?? {},
+    )
+  } catch {
+    return 0
+  }
+
+  let filled = 0
+  for (const item of pending) {
+    const doi = String(item.doi ?? '')
+      .trim()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+      .toLowerCase()
+    const issn = normalizeIssn(found?.[doi] ?? '')
+    if (issn === '') continue
+    item.issn = issn
+    filled += 1
+  }
+  return filled
+}
+
+/**
+ * 给库里已有的老论文补质量分。
+ *
+ * 有两种「老论文」都要处理：
+ *   1. 完全没有 `quality`（质量分功能上线前入库的）；
+ *   2. 有 `quality`，但当时没有 ISSN，只能按被引算 —— 分数是真的，可是漏了
+ *      最关键的影响因子信号（实测用户库里 33 篇全是这种：22 篇靠被引打了
+ *      medium，11 篇连被引都没有，全被埋在「待评估」里）。
+ *
+ * 所以这里的判据不是「有没有 quality」，而是「有没有 ISSN」。补到 ISSN 之后
+ * 无法定位的会重新算分；本来就完整的不动（幂等）。
+ *
+ * @returns {Promise<number>} 补齐（或重算）了多少篇
+ */
+export async function backfillQuality(store, options = {}) {
+  const state = await store.load()
+  const items = Array.isArray(state.items) ? state.items : []
+  const unscored = items.filter((item) => item.quality === null || typeof item.quality !== 'object')
+  // 已有分数但缺 ISSN 的：补到 ISSN 后要重算，否则影响因子这份权重永远拿不到
+  const rescore = items.filter(
+    (item) =>
+      item.quality !== null &&
+      typeof item.quality === 'object' &&
+      normalizeIssn(item.issn ?? '') === '' &&
+      String(item.doi ?? '') !== '',
+  )
+  const pending = unscored.concat(rescore)
+  if (pending.length === 0) return 0
+
+  // 老论文几乎都没有 ISSN（字段是后加的），不补的话期刊信号永远空着。
+  try {
+    await ensureIssns(pending, { api: state.settings.api, issnResolver: options.issnResolver })
+  } catch {
+    /* 补不到 ISSN 只是少一个信号 */
+  }
+
+  // 只有真拿到 ISSN 的才值得重算一遍（没补到的保持原分，不要无谓地抖动）
+  const targets = pending.filter((item) => normalizeIssn(item.issn ?? '') !== '' || unscored.includes(item))
+  const issns = targets.map((item) => item.issn).filter((value) => normalizeIssn(value ?? '') !== '')
+
+  let journals = options.journals ?? null
+  if (options.journalCache !== undefined && options.journalCache !== null && issns.length > 0) {
+    try {
+      await options.journalCache.ensure(issns, state.settings.api)
+      journals = options.journalCache.asMap()
+    } catch {
+      /* 指标拿不到就退化成只看被引 */
+    }
+  }
+
+  const computed = new Map()
+  const filledIssn = new Map()
+  for (const item of targets) {
+    // 没有 ISSN 的有分数条目，保留原分（重算只会得到同一个结果，还多了抖动风险）
+    if (item.quality !== null && typeof item.quality === 'object' && normalizeIssn(item.issn ?? '') === '') continue
+    computed.set(item.id, paperQuality(item, { journals }))
+    filledIssn.set(item.id, item.issn)
+  }
+  if (computed.size === 0) return 0
+
+  await store.mutate((draft) => {
+    for (const item of draft.items) {
+      // ISSN 是这次反查补到的，也要落盘，否则下次又得重查一遍
+      const issn = filledIssn.get(item.id)
+      if (typeof issn === 'string' && issn !== '') item.issn = issn
+      const quality = computed.get(item.id)
+      if (quality !== undefined) item.quality = quality
+    }
+  })
+  return computed.size
+}
+
+/**
  * 组织一封摘要邮件正文。
  */
 export function buildDigest(items, topics) {
@@ -367,6 +485,13 @@ export async function runScan(ctx, config, store, options = {}) {
    * 已经入库的老论文，靠它预热不到本次新抓到的期刊。
    */
   let journals = options.journals ?? null
+  // 有些源（RSS / PubMed / arXiv）不给 ISSN，这些论文查不到影响因子就只能半瞎打分。
+  // 先用 DOI 反查补上 —— 反正质量评估前本来就要请求 OpenAlex，这里顺带解决。
+  try {
+    await ensureIssns(fresh, { api: settings.api, issnResolver: options.issnResolver })
+  } catch {
+    /* 补不到 ISSN 只是少一个信号，不阻断扫描 */
+  }
   if (options.journalCache !== undefined && options.journalCache !== null) {
     try {
       await options.journalCache.ensure(
@@ -429,6 +554,20 @@ export async function runScan(ctx, config, store, options = {}) {
 
   result.newItems = fresh
   result.finishedAt = nowIso()
+
+  // 顺手把库里老论文缺的质量分补上并落盘（幂等，没有缺的就直接返回 0）。
+  // 放在扫描末尾而不是插件启动时：启动阶段写 state 会和面板的首屏读抢文件锁，
+  // 测试里还会和临时目录清理撞车（EBUSY / ENOTEMPTY）。
+  try {
+    result.backfilled = await backfillQuality(store, {
+      journals,
+      api: settings.api,
+      issnResolver: options.issnResolver,
+      journalCache: options.journalCache,
+    })
+  } catch {
+    result.backfilled = 0
+  }
 
   // 邮件推送
   if (settings.mail.enabled && fresh.length > 0) {
