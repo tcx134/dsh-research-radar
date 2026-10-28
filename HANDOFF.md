@@ -69,7 +69,7 @@
 - ✅ **全文精读**（arXiv / Europe PMC / OA PDF / 出版社 PDF 四条路线，拿到正文就按正文总结，
   拿不到自动回退摘要，见 11.15）
 - ✅ **面板更直接**（标题回到第一行、质量分与「凭什么」可展开、顶部状态条、六段细节默认收起，见 11.15）
-- ✅ **260 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **261 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -107,7 +107,7 @@ I:\skill\dsh-research-radar\
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 │   ├── library.js  169 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
 │   └── graph.js    231 行 研究关系网（标签共现图 + 强主题之间的空档）
-├── test/                 19 个文件 / 260 个用例（node:test，零依赖）
+├── test/                 19 个文件 / 261 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -344,7 +344,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，260 个用例，~7.5s）
+# 0. 单测（最快，261 个用例，~7.5s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -511,15 +511,15 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 
 ### P3 —— 工程化
 
-**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 260 个）
-`node --test test/*.test.js`，**260 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 261 个）
+`node --test test/*.test.js`，**261 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 连字符折叠、语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、
 HTTP 路由、Config schema、趋势统计、论文库分架、邮件 HTML、质量分（对数曲线 / 百分位分区 / 缺信号先验）、
 全文抽取（HTML / PMC XML / PDF / 四条路线）、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 260 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 261 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -802,10 +802,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（260 个用例，全部通过）
+### 11.4 测试（261 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 260 / fail 0
+node --test test/*.test.js   →   pass 261 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -1476,7 +1476,7 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 | `test/store.test.js` | 9 | 默认值加 `fullText: true` |
 | `test/client-smoke.test.js` | 20 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`**；**关系网 3 例**（见 11.16.4） |
 
-合计 **260 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
+合计 **261 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
 
 #### 11.15.6 老论文补 ISSN 与重算（实测）
 
@@ -1673,6 +1673,14 @@ Structures，IF 8.51）、79（Polymers，IF 7.91）。
 6. **`client-smoke` 断言类名不能用 `textOf()`**。`textOf()` 只取文本节点，类名不在里面 ——
    要找带 `drr-quartile-q1` / `drr-g-fresh` 的元素，得用
    `findAll(tree, el => String(el.props?.className).includes(...))`。
+7. **`item.publishedAt ?? item.discoveredAt` 是个陷阱**（补 `test/index.test.js` 的路由用例时才抓到）。
+   `radar/store.js` 的 `normalizeItem` 把**缺失字段归一成空字符串**而不是 `null`，而 `??` 只挡
+   `null` / `undefined` —— 空串被选中、`Date.parse('')` 得 `NaN`，整篇论文就被时间窗口**无声地**
+   丢掉。直接 `buildGraph()` 喂原始对象时正常（没经过 store），只有走真实 `/graph` 路由才复现，
+   症状是关系网永远空白、`stats.papers` 为 0。修法：新增 `paperTime(item)`，先试 `publishedAt`，
+   解析不出来再试 `discoveredAt`。**要「二选一取时间」时不能只靠 `??`，必须验证解析结果。**
+   教训：**纯函数模块的单元测试全部通过，不代表接上 store 之后还正确** —— 归一化会改变字段的
+   空值形态（`null` → `''`），这类边界必须用一条走完整路由的集成用例兜住。
 
 
 

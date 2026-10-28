@@ -163,18 +163,21 @@ test('没有标签的论文只计 papers，不计 taggedPapers', () => {
   assert.equal(g.stats.taggedPapers, 1)
 })
 
-test('days 只保留窗口内发表的论文，没有日期的老数据不算进窗口', () => {
+test('days 只保留窗口内发表的论文，两个日期都没有的才丢掉', () => {
   const now = Date.parse('2026-06-01T00:00:00Z')
   const g = buildGraph(
     [
       paper('a', ['甲乙'], { publishedAt: '2026-05-20' }),
-      paper('b', ['乙丙'], { publishedAt: '2024-01-01' }),
-      paper('c', ['丙丁'], { publishedAt: '' }),
+      paper('b', ['乙丙'], { publishedAt: '2024-01-01', discoveredAt: '2024-01-02' }),
+      // 没有发表时间但有发现时间（很多源不给发表日）：按发现时间算，仍然进窗口
+      paper('c', ['丙丁'], { publishedAt: '', discoveredAt: '2026-05-25' }),
+      // 两个都没有：无从判断，丢掉
+      paper('d', ['丁戊'], { publishedAt: '', discoveredAt: '' }),
     ],
     { now, days: 90 },
   )
-  assert.equal(g.stats.papers, 1)
-  assert.deepEqual(g.nodes.map((n) => n.id), ['甲乙'])
+  assert.equal(g.stats.papers, 2)
+  assert.deepEqual(g.nodes.map((n) => n.id).sort(), ['丙丁', '甲乙'].sort())
 })
 
 test('topicId 只看指定方向；days 传空或脏值时不限时间', () => {

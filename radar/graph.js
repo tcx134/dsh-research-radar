@@ -35,6 +35,19 @@ function timeOf(value) {
 }
 
 /**
+ * 取论文的时间：优先发表时间，没有再用发现时间。
+ *
+ * 不能写成 `item.publishedAt ?? item.discoveredAt` —— store 会把缺字段归一成
+ * **空字符串**而不是 null，`??` 只挡 null/undefined，于是空串会被选中、解析成
+ * NaN，整篇论文就被时间窗口无声地丢掉（关系网直接画成空白）。
+ */
+function paperTime(item) {
+  const published = timeOf(item.publishedAt)
+  if (Number.isFinite(published)) return published
+  return timeOf(item.discoveredAt)
+}
+
+/**
  * 从论文列表构建关系网。
  *
  * @param {object[]} items 论文（读 `summary.tags`、`publishedAt`、`discoveredAt`、`quality`）
@@ -95,7 +108,7 @@ export function buildGraph(items, options = {}) {
   const used = []
 
   for (const item of list) {
-    const time = timeOf(item.publishedAt ?? item.discoveredAt)
+    const time = paperTime(item)
     // 时间过滤放在最前面：被窗口挡掉的论文连标签都不该进图，
     // 否则节点权重会掺进窗口外的论文，看得出来的「重点」就不准了。
     // days 限定的是「论文发表时间」，没有日期的老数据不算进窗口。

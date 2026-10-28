@@ -191,6 +191,73 @@ test('GET /stats 返回趋势统计，days/topicId 生效', async (t) => {
   ctx2.disposeAll()
 })
 
+test('GET /graph 返回标签共现网与空档，days/topicId 生效', async (t) => {
+  const dir = await tempDir(t)
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+  const seeded = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/topics',
+    headers: { 'content-type': 'application/json' },
+    body: { op: 'upsert', topic: { id: 't-a', name: '金属橡胶', keywords: ['metal rubber'] } },
+  })
+  assert.equal(seeded.status, 200)
+  ctx.disposeAll()
+
+  const store = await import('../radar/store.js')
+  const s = store.createStore({}, { dataDir: dir })
+  const recent = (days) => new Date(Date.now() - days * 24 * 3600 * 1000).toISOString()
+  await s.mutate((state) => {
+    state.items = [
+      // 同篇里的三个标签两两连边；「金属橡胶」既走方向别名也走英文写法，必须并成一个节点
+      { id: 'a', topicId: 't-a', title: 'A', discoveredAt: recent(1), summary: { tags: ['金属橡胶', '本构模型', 'metal rubber'] } },
+      { id: 'b', topicId: 't-a', title: 'B', discoveredAt: recent(2), summary: { tags: ['金属橡胶', '本构模型'] } },
+      { id: 'c', topicId: 't-a', title: 'C', discoveredAt: recent(3), summary: { tags: ['隔振器', '隔振器'] } },
+      { id: 'd', topicId: 't-a', title: 'D', discoveredAt: recent(4), summary: { tags: ['金属橡胶', '隔振器'] } },
+      // 再各补一篇，让「本构模型」「隔振器」都够到强主题阈值（3 篇）
+      { id: 'f', topicId: 't-a', title: 'F', discoveredAt: recent(5), summary: { tags: ['本构模型'] } },
+      { id: 'g', topicId: 't-a', title: 'G', discoveredAt: recent(6), summary: { tags: ['隔振器'] } },
+      // 窗口外的老论文：days=30 时不该进图
+      { id: 'e', topicId: 't-a', title: 'E', discoveredAt: recent(400), summary: { tags: ['盐雾腐蚀', '疲劳损伤'] } },
+    ]
+  })
+
+  const ctx2 = makeCtx()
+  apply(ctx2, { dataDir: dir })
+
+  const { status, body } = await call(ctx2, { url: '/api/dsh-research-radar/graph?days=30' })
+  assert.equal(status, 200)
+  // 方向别名把「金属橡胶」和「metal rubber」并成 topic:t-a 一个节点
+  const hub = body.nodes.find((n) => n.id === 'topic:t-a')
+  assert.ok(hub, '应该出现方向节点 topic:t-a')
+  assert.equal(hub.label, '金属橡胶')
+  assert.equal(hub.weight, 3, '金属橡胶 出现在 a/b/d 三篇里')
+  // 窗口外的老论文不该出现在图里
+  assert.equal(body.nodes.some((n) => n.label === '盐雾腐蚀'), false)
+  assert.equal(body.stats.papers, 6)
+  // 「本构模型 × 隔振器」从没同篇出现过，且两边都够热 → 应该被列为空档
+  assert.ok(
+    body.gaps.some((g) => [g.aLabel, g.bLabel].sort().join('|') === ['本构模型', '隔振器'].sort().join('|')),
+    `空档里应该有「本构模型 × 隔振器」，实际是 ${JSON.stringify(body.gaps.map((g) => `${g.aLabel}×${g.bLabel}`))}`,
+  )
+  // 同篇出现过的组合不算空档
+  assert.equal(
+    body.gaps.some((g) => [g.aLabel, g.bLabel].sort().join('|') === ['金属橡胶', '本构模型'].sort().join('|')),
+    false,
+  )
+
+  // 放宽到 500 天，老论文进来
+  const wide = await call(ctx2, { url: '/api/dsh-research-radar/graph?days=500' })
+  assert.equal(wide.body.stats.papers, 7)
+  assert.ok(wide.body.nodes.some((n) => n.label === '盐雾腐蚀'))
+
+  // 别的方向 → 空图
+  const other = await call(ctx2, { url: '/api/dsh-research-radar/graph?topicId=t-zzz' })
+  assert.equal(other.body.nodes.length, 0)
+  assert.equal(other.body.stats.papers, 0)
+  ctx2.disposeAll()
+})
+
 test('GET /library 返回按年份分架的论文库', async (t) => {
   const dir = await tempDir(t)
   const ctx = makeCtx()
