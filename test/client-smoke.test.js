@@ -575,6 +575,138 @@ test('uiWorkspace 不可用时「精读」给出错误提示而不是崩掉', as
   }
 })
 
+test('关系网页拉 /graph 并画出主题节点、连线与空档', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const graphBody = {
+    nodes: [
+      { id: 'topic:t-a', label: '金属橡胶', weight: 9, recent: 6, tier: 'high', fresh: true },
+      { id: '本构模型', label: '本构模型', weight: 4, recent: 1, tier: 'medium', fresh: false },
+      { id: '隔振器', label: '隔振器', weight: 4, recent: 3, tier: 'medium', fresh: true },
+      { id: '干摩擦', label: '干摩擦', weight: 2, recent: 2, tier: 'low', fresh: true },
+    ],
+    edges: [
+      { source: 'topic:t-a', target: '本构模型', weight: 4, recent: 2 },
+      { source: 'topic:t-a', target: '隔振器', weight: 3, recent: 2 },
+    ],
+    gaps: [
+      { a: '本构模型', b: '隔振器', aLabel: '本构模型', bLabel: '隔振器', score: 6.1, aWeight: 4, bWeight: 4 },
+    ],
+    stats: { papers: 12, taggedPapers: 12, nodeCount: 4, edgeCount: 2, density: 0.333 },
+  }
+  const fetchStub = installFetch((url) => ({
+    body: url.includes('/graph') ? graphBody : sampleState(),
+  }))
+  try {
+    let tree = await mount(mini, Panel)
+    const graphTab = buttonByText(tree, '关系网')
+    assert.ok(graphTab, '应该渲染出「关系网」标签页')
+    graphTab.props.onClick()
+    tree = await mount(mini, Panel)
+
+    const graphCalls = fetchStub.calls.filter((c) => c.url.includes('/graph'))
+    assert.equal(graphCalls.length, 1, '打开关系网页应该拉一次 /graph')
+    // 默认窗口是 1 年
+    assert.match(graphCalls[0].url, /days=365/)
+
+    const text = textOf(tree)
+    assert.match(text, /金属橡胶/)
+    assert.match(text, /本构模型/)
+    assert.match(text, /隔振器/)
+    // 统计数字：4 个主题 / 2 条关联 / 密度 0.333
+    assert.match(text, /4/)
+    assert.match(text, /0\.333/)
+    // 空档清单：两个很热但没连过线的主题
+    assert.match(text, /可能存在的新方向/)
+    assert.match(text, /本构模型 × 隔振器/)
+
+    // SVG 真的画出来了：4 个圆、2 条线
+    const dots = findAll(tree, (el) => el.type === 'circle')
+    assert.equal(dots.length, 4)
+    const lines = findAll(tree, (el) => el.type === 'line')
+    assert.equal(lines.length, 2)
+    // 每个点都落在画布内（确定性布局不能把点甩出边界）
+    for (const dot of dots) {
+      assert.ok(dot.props.cx >= 0 && dot.props.cx <= 720, `圆点 x 越界: ${dot.props.cx}`)
+      assert.ok(dot.props.cy >= 0 && dot.props.cy <= 420, `圆点 y 越界: ${dot.props.cy}`)
+      assert.ok(dot.props.r > 0, '圆点半径应该为正')
+    }
+    // 「新出现」的主题带高亮描边类
+    const fresh = findAll(tree, (el) => String(el.props?.className || '').includes('drr-g-fresh'))
+    assert.equal(fresh.length, 3, '三条 fresh 的主题应该带高亮类')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('关系网点和「可能存在的新方向」都能点，切换时间范围会重新拉', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const graphBody = {
+    nodes: [
+      { id: 'a', label: '甲甲', weight: 5, recent: 2, tier: 'high', fresh: false },
+      { id: 'b', label: '乙乙', weight: 4, recent: 1, tier: 'medium', fresh: false },
+      { id: 'c', label: '丙丙', weight: 3, recent: 1, tier: 'low', fresh: false },
+    ],
+    edges: [{ source: 'a', target: 'b', weight: 2, recent: 1 }],
+    gaps: [{ a: 'b', b: 'c', aLabel: '乙乙', bLabel: '丙丙', score: 4, aWeight: 4, bWeight: 3 }],
+    stats: { papers: 8, taggedPapers: 8, nodeCount: 3, edgeCount: 1, density: 0.333 },
+  }
+  const fetchStub = installFetch((url) => ({
+    body: url.includes('/graph') ? graphBody : sampleState(),
+  }))
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '关系网').props.onClick()
+    tree = await mount(mini, Panel)
+
+    // 点节点 → 聚焦，非邻居变淡
+    const nodeGroup = findAll(tree, (el) => el.type === 'g' && String(el.props?.className || '').includes('drr-g-node'))[0]
+    assert.ok(nodeGroup, '应该渲染出可点的主题节点')
+    nodeGroup.props.onClick()
+    tree = await mount(mini, Panel)
+    let text = textOf(tree)
+    assert.match(text, /看全部/, '聚焦后应该出现「看全部」按钮')
+    const dimmed = findAll(tree, (el) => String(el.props?.className || '').includes('drr-g-dim'))
+    assert.ok(dimmed.length >= 1, '非邻居节点应该变淡')
+
+    // 点空档里的主题按钮也能聚焦
+    buttonByText(tree, '丙丙').props.onClick()
+    tree = await mount(mini, Panel)
+    // 取消聚焦
+    buttonByText(tree, '看全部').props.onClick()
+    tree = await mount(mini, Panel)
+    assert.doesNotMatch(textOf(tree), /看全部/)
+
+    // 切成「全部」时间范围 → 重新拉一次，且不带 days
+    const before = fetchStub.calls.filter((c) => c.url.includes('/graph')).length
+    buttonByText(tree, '全部').props.onClick()
+    tree = await mount(mini, Panel)
+    const graphCalls = fetchStub.calls.filter((c) => c.url.includes('/graph'))
+    assert.equal(graphCalls.length, before + 1, '切换时间范围应该重新拉 /graph')
+    assert.doesNotMatch(graphCalls[graphCalls.length - 1].url, /days=/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('关系网加载失败时给出错误提示而不是白屏', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/graph')) return { ok: false, body: {} }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '关系网').props.onClick()
+    tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /关系网加载失败/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
 test('趋势页会拉 /stats 并渲染周柱状图与榜单', async () => {
   const mini = makeReact()
   const { Panel } = await loadClient(mini.React)

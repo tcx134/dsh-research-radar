@@ -3,6 +3,8 @@ import tls from 'node:tls'
 import os from 'node:os'
 import crypto from 'node:crypto'
 
+import { finiteNumber } from './quality.js'
+
 /**
  * 零依赖 SMTP 客户端。
  * 支持：隐式 TLS(465) / STARTTLS(587) / 明文(25，仅内网)，AUTH LOGIN 与 AUTH PLAIN。
@@ -271,8 +273,8 @@ function paperCardHtml(item, t) {
           : quality.tier === 'low'
             ? t('quality_low')
             : ''
-  const impactFactor =
-    quality !== null && Number.isFinite(Number(quality.impactFactor)) ? Number(quality.impactFactor) : null
+  const impactFactor = quality !== null ? finiteNumber(quality.impactFactor) : null
+  const qualityScore = quality !== null ? finiteNumber(quality.score) : null
   // 全文 vs 仅摘要：邮件里也要标出来，用户才知道「局限」那一栏可不可信
   const basisLabel =
     summary === null ? '' : summary.basis === 'fulltext' ? t('read_fulltext') : t('read_abstract')
@@ -281,7 +283,7 @@ function paperCardHtml(item, t) {
     item.topicName ? chipHtml(item.topicName, { color: MAIL_COLORS.accent, bg: MAIL_COLORS.accentSoft, bold: true }) : '',
     qualityLabel !== ''
       ? chipHtml(
-          quality !== null && Number.isFinite(Number(quality.score)) ? `${qualityLabel} ${quality.score}` : qualityLabel,
+          qualityScore !== null ? `${qualityLabel} ${qualityScore}` : qualityLabel,
           { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg, bold: true },
         )
       : '',

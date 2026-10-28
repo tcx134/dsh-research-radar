@@ -209,6 +209,26 @@ window.__ModuleLoader__.load({
         lib_unit: '篇',
         lib_hint: '这里按发表年份把检索到的论文分架摆放 —— 回溯检索捞回来的老论文会落在更早的架子上。',
         lib_no_summary: '未摘要',
+        tab_graph: '关系网',
+        graph_hint: '每个圆是一个反复出现的研究主题，连线表示它们常出现在同一篇论文里。两个都很热、却从没连过线的主题之间就是空档 —— 那往往是还没人做的交叉方向。',
+        graph_focus: '研究重点',
+        graph_gaps: '可能存在的新方向',
+        graph_no_gaps: '暂时没发现明显的空档 —— 主题之间的连线已经比较密了。',
+        graph_empty: '还没有足够的标签来画关系网。先跑几次扫描，攒到十来篇论文再看。',
+        graph_load_failed: '关系网加载失败',
+        graph_nodes: '主题',
+        graph_edges: '关联',
+        graph_density: '关联密度',
+        graph_papers: '覆盖论文',
+        graph_weight: '篇',
+        graph_cooc: '共同出现',
+        graph_gap_score: '空档强度',
+        graph_days: '时间范围',
+        graph_all_time: '全部',
+        graph_fresh: '新出现',
+        graph_click_node: '点一个主题，只看和它相关的论文',
+        graph_reset: '看全部',
+        years_unit: '年',
       },
       en: {
         title: 'Research Radar',
@@ -408,6 +428,26 @@ window.__ModuleLoader__.load({
         lib_unit: '',
         lib_hint: 'Papers are shelved by publication year — backfilled older papers land on the earlier shelves.',
         lib_no_summary: 'No summary',
+        tab_graph: 'Network',
+        graph_hint: 'Each circle is a recurring research theme; a line means two themes show up in the same paper. Two hot themes with no line between them are a gap — usually a cross-over nobody has done yet.',
+        graph_focus: 'Research focus',
+        graph_gaps: 'Possible new directions',
+        graph_no_gaps: 'No obvious gaps right now — the themes are already well connected.',
+        graph_empty: 'Not enough tags to draw a network yet. Run a few scans and come back after a dozen papers.',
+        graph_load_failed: 'Failed to load the network',
+        graph_nodes: 'Themes',
+        graph_edges: 'Links',
+        graph_density: 'Density',
+        graph_papers: 'Papers',
+        graph_weight: 'papers',
+        graph_cooc: 'co-occur',
+        graph_gap_score: 'Gap strength',
+        graph_days: 'Range',
+        graph_all_time: 'All',
+        graph_fresh: 'new',
+        graph_click_node: 'Click a theme to see only its papers',
+        graph_reset: 'Show all',
+        years_unit: 'y',
       },
     }
 
@@ -564,6 +604,29 @@ window.__ModuleLoader__.load({
 .drr-book-title a:hover{color:var(--dsw-alias-link,#4176e6);text-decoration:underline}
 .drr-book-meta{flex:0 0 auto;font-size:10.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);font-variant-numeric:tabular-nums}
 .drr-book-read .drr-book-title{opacity:.6}
+
+.drr-graph{border:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.28));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#242424);padding:6px;overflow:hidden}
+.drr-graph-svg{display:block;width:100%;height:auto;max-height:460px}
+.drr-g-edge{stroke:var(--dsw-alias-link,#4176e6);stroke-linecap:round;transition:opacity .15s}
+.drr-g-node{cursor:pointer}
+.drr-g-node .drr-g-dot{fill:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.32));stroke:var(--dsw-alias-border-l4,rgba(128,128,128,.4));stroke-width:1;transition:fill .15s,opacity .15s}
+.drr-g-node:hover .drr-g-dot{fill:var(--dsw-alias-link,#4176e6);opacity:.9}
+.drr-g-high .drr-g-dot{fill:var(--dsw-alias-state-success-primary,#1a7f43)}
+.drr-g-medium .drr-g-dot{fill:var(--dsw-alias-link,#4176e6);opacity:.72}
+.drr-g-low .drr-g-dot{fill:var(--dsw-alias-label-tertiary,#81858c);opacity:.6}
+.drr-g-unknown .drr-g-dot{fill:var(--dsw-alias-border-l4,rgba(128,128,128,.4));opacity:.55}
+.drr-g-fresh .drr-g-dot{stroke:var(--dsw-alias-state-warn-primary,#c98a00);stroke-width:2.5}
+.drr-g-node-on .drr-g-dot{stroke:var(--dsw-alias-link,#4176e6);stroke-width:3}
+.drr-g-dim{opacity:.22}
+.drr-g-label{font-size:9.5px;fill:var(--dsw-alias-label-secondary,#9a9a9a);pointer-events:none;user-select:none}
+.drr-g-node-on .drr-g-label{fill:var(--dsw-alias-label-primary,#e6e6e6);font-weight:600}
+.drr-gap{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--dsw-alias-border-l3,rgba(128,128,128,.16));font-size:12px;line-height:1.6}
+.drr-gap:first-of-type{border-top:none}
+.drr-gap-pair{font-weight:600}
+.drr-gap-meta{font-size:10.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);font-variant-numeric:tabular-nums}
+.drr-tag-btn{appearance:none;border:1px solid transparent;font-family:inherit;cursor:pointer}
+.drr-tag-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16))}
+.drr-tag-on{background:var(--dsw-specific-bubble,#edf3fe);color:var(--dsw-alias-link,#4176e6);border-color:var(--dsw-alias-link,#4176e6);font-weight:600}
 `
 
     function api(action, body) {
@@ -693,12 +756,19 @@ window.__ModuleLoader__.load({
       const isStarred = item.starred === true
       const badge = qualityBadge(t, item.quality)
       const quality = item.quality !== null && typeof item.quality === 'object' ? item.quality : null
-      const impactFactor =
-        quality !== null && Number.isFinite(Number(quality.impactFactor)) ? Number(quality.impactFactor) : null
-      const score = quality !== null && Number.isFinite(Number(quality.score)) ? Math.round(Number(quality.score)) : null
+      // 不能用 `Number.isFinite(Number(x))`：`Number(null)` 是 0，会把握手不到的
+      // 影响因子显示成「影响因子 0.0」。必须先把 null / '' / 非数字挡掉。
+      const asNumber = (value) => {
+        if (value === null || value === undefined || value === '') return null
+        const number = Number(value)
+        return Number.isFinite(number) ? number : null
+      }
+      const impactFactor = quality !== null ? asNumber(quality.impactFactor) : null
+      const score = quality !== null ? asNumber(quality.score) : null
+      const roundedScore = score === null ? null : Math.round(score)
       // unknown 档的 score 是中性先验算出来的（50 分），不是真实评价。
       // 直接显示「待评估 · 50」会让人以为这篇是中等质量，所以这种情况下不露数字。
-      const showScore = score !== null && badge.cls !== 'drr-q-unknown'
+      const showScore = roundedScore !== null && badge.cls !== 'drr-q-unknown'
       // 分区（Q1–Q4）来自「同年同领域被引百分位」，是用户明确要看的东西
       const quartile = quality !== null && typeof quality.quartile === 'string' ? quality.quartile : null
       // 摘要基于全文还是仅摘要 —— 直接决定用户该不该相信「局限」「方法」这些字段
@@ -736,7 +806,7 @@ window.__ModuleLoader__.load({
             title: t('quality_title'),
             onClick: () => setWhyOpen(!whyOpen),
           },
-          showScore ? `${badge.label} · ${score}` : badge.label,
+          showScore && roundedScore !== null ? `${badge.label} · ${roundedScore}` : badge.label,
         ),
         quartile !== null
           ? h(
@@ -1163,6 +1233,257 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 关系网视图。
+     *
+     * 为什么用纯 SVG + 前端力导向，而不是引一个图表库：
+     * 插件要打进 DSH 的 bundle，多一个依赖就多一份打包与版本风险；
+     * 而这里要画的东西很小（≤28 个点、≤90 条线），自己算位置反而更可控。
+     *
+     * 布局是**确定性的**（不是随机撒点）：起点按圆周均匀铺开，然后跑固定轮数的
+     * 力导向。同样的数据永远画出同一张图 —— 用户刷新两次不会看到两张不一样的图，
+     * 这一点对「我在看趋势」很重要。
+     */
+    const GRAPH_W = 720
+    const GRAPH_H = 420
+    const GRAPH_PAD = 46
+
+    /** 简易确定性力导向布局。返回 Map<id, {x, y, r}>。 */
+    function layoutGraph(nodes, edges) {
+      const out = new Map()
+      const count = nodes.length
+      if (count === 0) return out
+      const cx = GRAPH_W / 2
+      const cy = GRAPH_H / 2
+      const radius = Math.min(GRAPH_W, GRAPH_H) / 2 - GRAPH_PAD
+      const maxWeight = nodes.reduce((m, n) => Math.max(m, Number(n.weight) || 0), 1)
+      const pos = new Map()
+
+      nodes.forEach((node, index) => {
+        // 先按圆周均匀铺开，权重大的稍微靠内一点（视觉上更像中心）
+        const angle = (index / count) * Math.PI * 2 - Math.PI / 2
+        const weight = Number(node.weight) || 0
+        const shrink = 0.55 + 0.45 * (1 - weight / maxWeight)
+        pos.set(node.id, { x: cx + Math.cos(angle) * radius * shrink, y: cy + Math.sin(angle) * radius * shrink })
+      })
+
+      const ids = nodes.map((n) => n.id)
+      const links = edges.filter((e) => pos.has(e.source) && pos.has(e.target))
+      // 固定 120 轮：够收敛，也不会让面板卡住（28 节点 × 120 轮 = 一次几毫秒）
+      for (let round = 0; round < 120; round += 1) {
+        const delta = new Map(ids.map((id) => [id, { x: 0, y: 0 }]))
+        // 点与点互斥，避免糊在一起
+        for (let i = 0; i < ids.length; i += 1) {
+          for (let j = i + 1; j < ids.length; j += 1) {
+            const a = pos.get(ids[i])
+            const b = pos.get(ids[j])
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            let dist = Math.hypot(dx, dy)
+            if (dist < 0.01) {
+              // 完全重合时给一个确定性的偏移，别用随机数
+              dx = (i - j) * 0.1 + 0.1
+              dy = 0.1
+              dist = Math.hypot(dx, dy)
+            }
+            const push = 5200 / (dist * dist)
+            delta.get(ids[i]).x -= (dx / dist) * push
+            delta.get(ids[i]).y -= (dy / dist) * push
+            delta.get(ids[j]).x += (dx / dist) * push
+            delta.get(ids[j]).y += (dy / dist) * push
+          }
+        }
+        // 有连线的互相吸引：共现越多，拉得越近
+        for (const link of links) {
+          const a = pos.get(link.source)
+          const b = pos.get(link.target)
+          const dx = b.x - a.x
+          const dy = b.y - a.y
+          const dist = Math.hypot(dx, dy) || 0.01
+          const pull = (dist - 90) * 0.012 * Math.min(4, 1 + (Number(link.weight) || 1) * 0.35)
+          delta.get(link.source).x += (dx / dist) * pull
+          delta.get(link.source).y += (dy / dist) * pull
+          delta.get(link.target).x -= (dx / dist) * pull
+          delta.get(link.target).y -= (dy / dist) * pull
+        }
+        for (const id of ids) {
+          const p = pos.get(id)
+          const d = delta.get(id)
+          p.x = Math.min(GRAPH_W - GRAPH_PAD, Math.max(GRAPH_PAD, p.x + d.x))
+          p.y = Math.min(GRAPH_H - GRAPH_PAD, Math.max(GRAPH_PAD, p.y + d.y))
+        }
+      }
+
+      for (const node of nodes) {
+        const p = pos.get(node.id)
+        const weight = Number(node.weight) || 0
+        // 半径跟着权重走，但给上下限，免得一个超级主题把别的都挤没
+        const r = 8 + Math.min(16, Math.sqrt(weight) * 3.4)
+        out.set(node.id, { x: p.x, y: p.y, r })
+      }
+      return out
+    }
+
+    /** 关系网页签：一张 SVG 图 + 「可能存在的新方向」清单。 */
+    function GraphView({ t, graph, days, onDays, focus, onFocus }) {
+      const nodes = Array.isArray(graph.nodes) ? graph.nodes : []
+      const edges = Array.isArray(graph.edges) ? graph.edges : []
+      const gaps = Array.isArray(graph.gaps) ? graph.gaps : []
+      const stats = graph.stats || {}
+      const pos = layoutGraph(nodes, edges)
+      const byId = new Map(nodes.map((n) => [n.id, n]))
+      const maxEdge = edges.reduce((m, e) => Math.max(m, Number(e.weight) || 0), 1)
+
+      // 聚焦某个主题时：它自己 + 所有和它直接相连的邻居保持高亮，其余变淡
+      const neighbours = new Set()
+      if (focus !== '') {
+        neighbours.add(focus)
+        for (const edge of edges) {
+          if (edge.source === focus) neighbours.add(edge.target)
+          if (edge.target === focus) neighbours.add(edge.source)
+        }
+      }
+      const dim = (id) => (focus !== '' && !neighbours.has(id) ? ' drr-g-dim' : '')
+
+      const dayOptions = [90, 365, 1095, 0]
+      const dayLabel = (value) => {
+        if (value === 0) return t('graph_all_time')
+        if (value === 1095) return `3${t('years_unit')}`
+        return `${value}${t('days_unit_short')}`
+      }
+
+      return h(
+        'div',
+        null,
+        h(
+          'div',
+          { className: 'drr-filters' },
+          h('span', { className: 'drr-hint', style: { margin: '0 6px 0 0' } }, t('graph_days')),
+          h(
+            'div',
+            { className: 'drr-seg' },
+            dayOptions.map((value) =>
+              h(
+                'button',
+                { key: value, className: days === value ? 'drr-seg-on' : '', onClick: () => onDays(value) },
+                dayLabel(value),
+              ),
+            ),
+          ),
+          focus !== ''
+            ? h('button', { className: 'drr-btn drr-btn-sm', onClick: () => onFocus('') }, t('graph_reset'))
+            : null,
+          h('span', { className: 'drr-spacer' }),
+          h(
+            'span',
+            { className: 'drr-hint' },
+            `${t('graph_nodes')} ${stats.nodeCount ?? 0} · ${t('graph_edges')} ${stats.edgeCount ?? 0} · ${t('graph_density')} ${stats.density ?? 0}`,
+          ),
+        ),
+        h('div', { className: 'drr-hint', style: { marginBottom: '10px' } }, t('graph_hint')),
+        nodes.length === 0
+          ? h('div', { className: 'drr-empty' }, t('graph_empty'))
+          : h(
+              'div',
+              { className: 'drr-graph' },
+              h(
+                'svg',
+                {
+                  className: 'drr-graph-svg',
+                  viewBox: `0 0 ${GRAPH_W} ${GRAPH_H}`,
+                  preserveAspectRatio: 'xMidYMid meet',
+                  role: 'img',
+                },
+                // 先画线，再画点 —— 线压在点下面才看得清
+                edges.map((edge) => {
+                  const a = pos.get(edge.source)
+                  const b = pos.get(edge.target)
+                  if (a === undefined || b === undefined) return null
+                  const weight = Number(edge.weight) || 0
+                  const muted = focus !== '' && !(neighbours.has(edge.source) && neighbours.has(edge.target))
+                  return h('line', {
+                    key: `${edge.source}|${edge.target}`,
+                    x1: a.x,
+                    y1: a.y,
+                    x2: b.x,
+                    y2: b.y,
+                    className: 'drr-g-edge',
+                    style: {
+                      strokeWidth: 1 + (weight / maxEdge) * 3.5,
+                      opacity: muted ? 0.08 : 0.28 + (weight / maxEdge) * 0.5,
+                    },
+                  })
+                }),
+                nodes.map((node) => {
+                  const p = pos.get(node.id)
+                  const label = String(node.label || node.id)
+                  const isFocus = node.id === focus
+                  return h(
+                    'g',
+                    {
+                      key: node.id,
+                      className: `drr-g-node${dim(node.id)}${isFocus ? ' drr-g-node-on' : ''}`,
+                      onClick: () => onFocus(isFocus ? '' : node.id),
+                    },
+                    h('circle', {
+                      cx: p.x,
+                      cy: p.y,
+                      r: p.r,
+                      className: `drr-g-dot drr-g-${node.tier || 'unknown'}${node.fresh ? ' drr-g-fresh' : ''}`,
+                    }),
+                    h(
+                      'text',
+                      {
+                        x: p.x,
+                        y: p.y + p.r + 13,
+                        className: 'drr-g-label',
+                        textAnchor: 'middle',
+                      },
+                      label.length > 12 ? `${label.slice(0, 11)}…` : label,
+                    ),
+                    h('title', null, `${label} · ${node.weight} ${t('graph_weight')}`),
+                  )
+                }),
+              ),
+            ),
+        h('div', { className: 'drr-list-title', style: { marginTop: '16px' } }, t('graph_gaps')),
+        gaps.length === 0
+          ? h('div', { className: 'drr-hint' }, t('graph_no_gaps'))
+          : gaps.map((gap) =>
+              h(
+                'div',
+                { key: `${gap.a}|${gap.b}`, className: 'drr-gap' },
+                h('span', { className: 'drr-gap-pair' }, `${gap.aLabel} × ${gap.bLabel}`),
+                h(
+                  'span',
+                  { className: 'drr-gap-meta' },
+                  `${gap.aWeight} ${t('graph_weight')} / ${gap.bWeight} ${t('graph_weight')}`,
+                ),
+                h('span', { className: 'drr-spacer' }),
+                h('button', { className: 'drr-btn drr-btn-sm', onClick: () => onFocus(gap.a) }, gap.aLabel),
+                h('button', { className: 'drr-btn drr-btn-sm', onClick: () => onFocus(gap.b) }, gap.bLabel),
+              ),
+            ),
+        h('div', { className: 'drr-list-title', style: { marginTop: '16px' } }, t('graph_focus')),
+        h(
+          'div',
+          { className: 'drr-tags' },
+          nodes.slice(0, 12).map((node) =>
+            h(
+              'button',
+              {
+                key: node.id,
+                className: `drr-tag drr-tag-btn${node.id === focus ? ' drr-tag-on' : ''}`,
+                onClick: () => onFocus(node.id === focus ? '' : node.id),
+                title: `${node.weight} ${t('graph_weight')}`,
+              },
+              `${node.label} ${node.weight}`,
+            ),
+          ),
+        ),
+      )
+    }
+
     function Panel() {
       const [locale] = React.useState(() => {
         try {
@@ -1196,6 +1517,11 @@ window.__ModuleLoader__.load({
       const [library, setLibrary] = React.useState(null)
       const [libGroupBy, setLibGroupBy] = React.useState('year')
       const [libError, setLibError] = React.useState('')
+      const [graph, setGraph] = React.useState(null)
+      const [graphDays, setGraphDays] = React.useState(365)
+      const [graphError, setGraphError] = React.useState('')
+      // 点了某个主题之后，高亮它和它的邻居（不做二次请求，纯前端筛选）
+      const [graphFocus, setGraphFocus] = React.useState('')
 
       /** 把状态载荷里的设置草稿同步进表单（不影响已加载的条目列表）。 */
       const absorbSettings = (next) => {
@@ -1270,6 +1596,22 @@ window.__ModuleLoader__.load({
         if (tab !== 'library') return
         void loadLibrary()
       }, [tab, loadLibrary])
+
+      /** 关系网：同样按需加载。 */
+      const loadGraph = React.useCallback(() => {
+        setGraphError('')
+        const params = new URLSearchParams()
+        if (graphDays > 0) params.set('days', String(graphDays))
+        if (topicFilter !== '') params.set('topicId', topicFilter)
+        return api(`graph?${params.toString()}`)
+          .then(setGraph)
+          .catch((error) => setGraphError(error.message))
+      }, [graphDays, topicFilter])
+
+      React.useEffect(() => {
+        if (tab !== 'graph') return
+        void loadGraph()
+      }, [tab, loadGraph])
 
       const loadMore = () => {
         setBusy('more')
@@ -1858,6 +2200,26 @@ window.__ModuleLoader__.load({
         )
       })()
 
+      const graphTab = (() => {
+        if (graphError !== '') {
+          return h('div', { className: 'drr-note drr-note-err' }, `${t('graph_load_failed')}: ${graphError}`)
+        }
+        if (graph === null) {
+          return h('div', { className: 'drr-empty' }, '…')
+        }
+        return h(GraphView, {
+          t,
+          graph,
+          days: graphDays,
+          onDays: (value) => {
+            setGraphFocus('')
+            setGraphDays(value)
+          },
+          focus: graphFocus,
+          onFocus: setGraphFocus,
+        })
+      })()
+
       const topicsTab = h(
         'div',
         null,
@@ -2282,7 +2644,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'drr-tabs' },
-          ['items', 'library', 'topics', 'stats', 'settings'].map((key) =>
+          ['items', 'library', 'topics', 'graph', 'stats', 'settings'].map((key) =>
             h(
               'button',
               {
@@ -2304,9 +2666,11 @@ window.__ModuleLoader__.load({
               ? libraryTab
               : tab === 'topics'
                 ? topicsTab
-                : tab === 'stats'
-                  ? statsTab
-                  : settingsTab,
+                : tab === 'graph'
+                  ? graphTab
+                  : tab === 'stats'
+                    ? statsTab
+                    : settingsTab,
         ),
       )
     }

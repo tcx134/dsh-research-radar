@@ -46,7 +46,7 @@
 - ✅ 五维检索（keywords / authors / venues / institutions / exclude）+ 同维 OR、跨维 AND
 - ✅ 相关性保护（strict 模式），修掉了短缩写污染
 - ✅ LLM 结构化摘要（一句话 / 问题 / 方法 / 内容与结论 / 创新点 / 局限 / 相关性 / 标签）
-- ✅ 卡片式面板（五个页签：最新论文 / 论文库 / 研究方向 / 趋势 / 设置）
+- ✅ 卡片式面板（六个页签：最新论文 / 论文库 / 研究方向 / 关系网 / 趋势 / 设置）
 - ✅ 「试检索」按钮（不写库不摘要，先验证准确率）
 - ✅ 纯 Node 手写 SMTP（零依赖），465 隐式 TLS 与 587 STARTTLS 都支持
 - ✅ 定时扫描（默认 12 小时）
@@ -69,7 +69,7 @@
 - ✅ **全文精读**（arXiv / Europe PMC / OA PDF / 出版社 PDF 四条路线，拿到正文就按正文总结，
   拿不到自动回退摘要，见 11.15）
 - ✅ **面板更直接**（标题回到第一行、质量分与「凭什么」可展开、顶部状态条、六段细节默认收起，见 11.15）
-- ✅ **241 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **260 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -92,8 +92,8 @@ SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
 I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
-├── index.js       849 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     2370 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── index.js 867 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
+├── client.js     2734 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
@@ -105,8 +105,9 @@ I:\skill\dsh-research-radar\
 │   ├── quality.js  421 行 质量分（期刊影响因子 / 被引百分位与 Q1–Q4 分区 / 开放获取 → 0–100 + 档位）+ DOI 反查 ISSN
 │   ├── fulltext.js 598 行 全文抓取（arXiv / Europe PMC / OA PDF / 出版社 PDF → 纯文本）
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
-│   └── library.js  165 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
-├── test/                 18 个文件 / 241 个用例（node:test，零依赖）
+│   ├── library.js  169 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
+│   └── graph.js    231 行 研究关系网（标签共现图 + 强主题之间的空档）
+├── test/                 19 个文件 / 260 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -138,6 +139,7 @@ export function apply(ctx, config) { ... }
 | POST | `/item` | 改 `read` / `starred` |
 | POST | `/mark-all-read` | 全部标为已读 |
 | GET | `/stats` | 趋势统计（`?days=&topicId=`） |
+| GET | `/graph` | 研究关系网：标签共现节点 / 边 / 空档（`?days=&topicId=`） |
 | GET | `/library` | 论文库书架（`?groupBy=year\|topic&topicId=`） |
 | POST | `/clear-items` | 清空条目 |
 | POST | `/test-mail` | 发测试邮件 |
@@ -186,7 +188,7 @@ window.__ModuleLoader__.load({
 - 注册：`ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({name:'sidebar.panellist', id:PANEL_ID, order:5, label:()=>ctx.locale.bind(NS)('title')}, RadarIcon))`
   + `ctx.slots.inject('main', () => ctx.slots.register({name:'main', key:PANEL_ID, locale:NS}, Panel))`
   —— **`sidebar.panellist` 的 id 和 `main` 的 key 用同一个值就会自动联动**
-- 组件：`RadarIcon` / `Panel`（五 tab：items / library / topics / stats / settings）/ `ItemCard` / `TopicForm` / `Field` / `RankList`
+- 组件：`RadarIcon` / `Panel`（六 tab：items / library / topics / graph / stats / settings）/ `ItemCard` / `TopicForm` / `Field` / `RankList`
 - `api(action, body)` 用同源 `fetch` + `x-dsh-research-radar: 1` header
 - **Client 服务**：`apply(ctx)` 把 ctx 存进模块级 `clientContext`，`startAgentSession(prompt)` 用它取
   `ctx.get('uiWorkspace')`（回退 `ctx.uiWorkspace`）调 `startSession(undefined, {prompt, clearPreviousDraft:false})`
@@ -342,7 +344,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，241 个用例，~7.5s）
+# 0. 单测（最快，260 个用例，~7.5s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -509,15 +511,15 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 
 ### P3 —— 工程化
 
-**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 241 个）
-`node --test test/*.test.js`，**241 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 260 个）
+`node --test test/*.test.js`，**260 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 连字符折叠、语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、
 HTTP 路由、Config schema、趋势统计、论文库分架、邮件 HTML、质量分（对数曲线 / 百分位分区 / 缺信号先验）、
 全文抽取（HTML / PMC XML / PDF / 四条路线）、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 241 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 260 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -800,10 +802,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（241 个用例，全部通过）
+### 11.4 测试（260 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 241 / fail 0
+node --test test/*.test.js   →   pass 260 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -824,10 +826,11 @@ node --test test/*.test.js   →   pass 241 / fail 0
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
 | `test/stats.test.js` | 11 | `weekStart` 归周一、窗口夹取（含 `null`→90）、补空周、榜单排序、坏/未来时间戳 |
 | `test/mail.test.js` | 10 | 无 `<style>` 无 `class=`、卡片边色、字段渲染、HTML 转义、挡 `javascript:`、中英文 |
-| `test/index.test.js` | 14 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、`GET /library`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
+| `test/index.test.js` | 14 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、`GET /graph`、`GET /library`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
 | `test/summarize.test.js` | 8 | 三档字段集、`abstractChars`/`maxTokens` 严格递增、`summaryDepthOptions`、`buildSystemPrompt` 只列当前档、`buildUserMessage` 按档截断、`summarizePaper` 精简档与深度档 |
 | `test/library.test.js` | 13 | `yearOf` 只认开头四位、`freshnessOf` 90/365 天边界与未来日期、按年份分架与排序、无日期归「未知」、架内排序三级兜底、summary 计数、行只带精简字段、按方向分架与「未分类」、topicId 过滤、脏数据、空库、每架老论文数/未读数 |
-| `test/client-smoke.test.js` | 17 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境、**质量徽章 + 分区徽章** |
+| `test/graph.test.js` | 16 | 共现边权重、重复标签只算一次、方向名与关键词合并同一概念（`nodeCount 1` / `label 金属橡胶` / `weight 3`）、合并后无自环、单字标签丢弃、节点上限、空档只从强主题找且排除已连边、弱主题不参与、空档数量上限、`fresh` 判定、脏输入安全、tags 非字符串安全、密度自洽、无标签论文只计 papers、`days` 窗口过滤、`topicId` 过滤 |
+| `test/client-smoke.test.js` | 20 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、**关系网 3 例**（节点/连线/空档、聚焦与换窗口、加载失败）、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境、**质量徽章 + 分区徽章** |
 
 `test/helpers.js` 提供 `tempDir(t)` / `makeCtx()` / `call(ctx,req)` / `seedState(dir,state)`。
 
@@ -1191,7 +1194,7 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
   回溯捞回来的老论文很容易被后续扫描挤掉；改成书架后必须留得住。实测每篇约 4KB（含结构化摘要），
   1000 篇约 4MB，`state.json` 单文件读写仍然很快。
 
-#### 11.13.2 Client 侧（第五个页签「论文库」）
+#### 11.13.2 Client 侧（「论文库」页签）
 
 - `loadLibrary()` 用 `React.useCallback` 包一层，`useEffect` 只在 `tab === 'library'` 时才拉
   —— 和趋势页一样，不打开就不发请求，首屏不多一次往返。
@@ -1471,9 +1474,9 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 | `test/fulltext.test.js` | 17 | arXiv 编号识别 / HTML 转文本 / PMC body 抽取 / PDF 抽取 / 非 PDF 安全 / 可读性判定 / 截断 / 四条路线回退 / 限定路线 / `citation_pdf_url` / 域名拼 `/pdf` / 订阅制快速失败 / 预算共享 / 换 UA 重试 / 验证页快速放弃 |
 | `test/scan.test.js` | 30 | 新增「按设置决定是否抓全文」（关掉时只发 1 个 RSS 请求，不碰 doi.org）、`backfillQuality` 4 例、`ensureIssns` 3 例、**「有分数但缺 ISSN」也会重算**、**补不到 ISSN 不抹掉已有分数** |
 | `test/store.test.js` | 9 | 默认值加 `fullText: true` |
-| `test/client-smoke.test.js` | 17 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`** |
+| `test/client-smoke.test.js` | 20 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`**；**关系网 3 例**（见 11.16.4） |
 
-合计 **241 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
+合计 **260 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
 
 #### 11.15.6 老论文补 ISSN 与重算（实测）
 
@@ -1576,6 +1579,100 @@ Structures，IF 8.51）、79（Polymers，IF 7.91）。
    `quality === null`，跑真实库返回 `backfilled 0` 却什么都没修 —— 因为那 33 篇都**已经算过分**
    （只是没 ISSN，算出来的是半瞎的分数）。判据必须落在**前提**（有没有 ISSN）而不是**结果**
    （有没有分数）。
+8. **影响因子显示成 `0.0` 的根因又是 `Number(null) === 0`（第 6 次）**。`client.js` 里
+   `Number.isFinite(Number(quality.impactFactor))` 在 `impactFactor === null` 时得 `0`，
+   于是「没识别到期刊」被渲染成「影响因子 0.0」；`radar/library.js` 的书架、`radar/mail.js` 的邮件
+   各有一份同样的写法。彻底修法是 `radar/quality.js` 导出 **`finiteNumber(value)`**
+   （`null`/`undefined`/`''`/布尔/非有限数一律 `null`），四处统一改用它。
+   **新增数值字段时，一律走 `finiteNumber`，不要手写 `Number.isFinite(Number(x))`。**
+
+---
+
+## 十一（续）、关系网：把「研究重点」和「空档」画出来（2026-10-28）
+
+用户在 2026-10-28 提了两件事：**「题目/内容太多，UI 应该更直接」** 与
+**「出一个类似关系网图的东西，展现各论文研究的重点和可能存在的新研究方向」**。
+11.15.3 已经处理了前半句（卡片重排、状态条、细节折叠、分区徽章），这一节是后半句。
+
+### 11.16.1 为什么用「标签共现」而不是别的
+
+**要回答的问题是「这些论文一起在讲哪几件事，哪两件事明明都热却还没人连起来」。**
+能拿来用的数据只有每篇论文的 `summary.tags`（LLM 从标题 + 摘要/全文提炼的 3–8 个短词），
+它天然就是「这篇论文在讲什么」的浓缩。于是：
+
+- **节点 = 标签**，权重 = 出现在多少篇论文里 —— 这就是「研究重点」。
+- **边 = 同一篇论文里的两个标签**，权重 = 共现篇数 —— 这就是「这两件事被一起做过」。
+- **空档 = 两个都很热（`weight >= 3`）却从没连过线的标签对** —— 这就是「可能存在的新方向」。
+
+**关键取舍：空档是量出来的，不是模型编的。** 完全可以再调一次 LLM 让它「提几个交叉方向」，
+但那是在生成幻觉；而从用户自己的论文库里量出来的空格子，是可复核的 —— 用户能点开两个主题
+看到底有哪些论文，自己判断这个空档是不是真没人做。
+
+### 11.16.2 一个必须先做的事：把同一概念的不同写法合并
+
+用户真实库里 36 篇论文的标签统计是：
+
+```
+金属橡胶 29 · metal rubber 6 · 隔振器 4 · 本构模型 4 · 动态力学性能 2 · 摩擦磨损 2 ·
+本构建模 2 · 力学性能 2 · 参数辨识 2 · 干摩擦 2 · 随机振动 2 · 应变率效应 2 · …
+```
+
+`金属橡胶` 和 `metal rubber` 是**同一个概念**（LLM 有时输出中文、有时输出英文）。
+不合并的话，28 个节点里会出现**两个「最热主题」**，而且它们之间「没有连线」——
+于是算法会把「金属橡胶 × metal rubber」当成一个**假空档**推给用户。这显然荒谬。
+
+处理办法（`buildGraph` 的 `options.topics`）：
+
+1. 用 `topic.name` + `topic.keywords` 建一个别名表（`金属橡胶` / `metal rubber` / `MR` / `EMWM`）。
+2. 标签先 `tagKey()` 归一（压空白 + 小写）再查表，命中就并成**同一个节点** `topic:<id>`，
+   `label` 用方向名（中文、最好看）。
+3. 合并后**不产生自环** —— 同一篇论文里两个写法都出现时只算一次。
+
+实测效果：`nodeCount 28`、`edgeCount 49`、`density 0.13`，`金属橡胶(34)` 成为唯一最热节点，
+`gaps` 从几条假空档收敛到**一条真正有意义的**：`本构模型 × 隔振器 (4/4)`。
+
+### 11.16.3 布局为什么是确定性的
+
+前端用纯 SVG + 自写的力导向（`layoutGraph()`，`client.js`），不引图表库：
+
+- **零依赖**。插件要打进 DSH 的 bundle，多一个依赖就多一份打包与版本风险。
+- **要画的东西很小**（≤28 个点、≤90 条线），自己算比配库快。
+
+算法本身是**完全确定性的**：起点按圆周均匀铺开（权重大的略靠内），然后跑**固定 120 轮**
+（互斥 + 连线吸引 + 边界夹取），**不用随机数**。同样的数据永远画出同一张图 ——
+用户刷新两次不该看到两张不一样的图，这对「我在看趋势」很重要。
+
+节点样式按 `tier`（high/medium/low/unknown）给色，`fresh`（近半年占比 ≥50%）加琥珀描边；
+点节点聚焦：它自己 + 直接邻居高亮，其余 `opacity: .22`。
+
+### 11.16.4 文件与测试
+
+| 文件 | 内容 |
+| --- | --- |
+| `radar/graph.js`（231 行） | 纯函数 `buildGraph(items, {topics, days, topicId, now, recentDays})` → `{nodes, edges, gaps, stats}`；常量 `MAX_NODES 28` / `MAX_EDGES 90` / `HUB_MIN_WEIGHT 3` / `GAP_LIMIT 5` |
+| `index.js` | `GET /graph`（`?days=&topicId=`），紧跟 `/stats` 之后 |
+| `client.js` | `GraphView` 组件 + `layoutGraph()`；第 4 个页签「关系网」；`.drr-g-*` 一组样式 |
+| `test/graph.test.js`（16 例） | 见 11.4 测试表 |
+
+空档打分：`score = sqrt(a.weight * b.weight) + min(a.recent, b.recent)` —— 前半句是「两边都够热」，
+后半句是「最近还在活跃」，都重要。
+
+### 11.16.5 踩坑
+
+1. **时间过滤必须放在标签循环之前**。第一版把它放在后面，被窗口挡掉的论文仍会计入节点权重与
+   `stats.papers` 分母 —— 测试 `days90 → papers 3` 期望 1。修法是先按窗口筛出 `used`，
+   后面所有统计都用 `used`。
+2. **`gaps` 的「已连边」集合要用截断前的 `edges.values()`**，不能用被 `maxEdges` 砍过的
+   `edgeList`，否则被砍掉的边会被误判成空白方向、凭空生成假空档。
+3. **标签可能是非字符串**。`String({})` 会产出 `[object Object]` 节点，必须先
+   `if (typeof raw !== 'string') continue`。单字标签（`key.length < 2`）当噪声丢掉。
+4. **测试里别用单字中文标签**。第一版 `test/graph.test.js` 用 `'甲','乙'` 造数据，
+   被「单字丢弃」规则清空，4 个用例直接失败 —— 改成两字（`'甲乙','乙丙'`）。
+5. **`days` 也要挡 `null`**（`Number(null) === 0` 第 7 次）。传 `null` 表示「不限窗口」，
+   不是「1 天」。写法与 `clampInt` / `stats.js` 一致：先判 `null/undefined/''` 再 `Number()`。
+6. **`client-smoke` 断言类名不能用 `textOf()`**。`textOf()` 只取文本节点，类名不在里面 ——
+   要找带 `drr-quartile-q1` / `drr-g-fresh` 的元素，得用
+   `findAll(tree, el => String(el.props?.className).includes(...))`。
 
 
 

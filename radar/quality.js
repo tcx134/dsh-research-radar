@@ -42,6 +42,24 @@ const NEUTRAL_CITATION = 50
 const NEUTRAL_JOURNAL = 50
 
 /**
+ * 安全地把一个值转成有限数字；**不是数字就返回 null**，绝不返回 0。
+ *
+ * 这个函数存在是因为 `Number(null) === 0` 这个坑在本仓库踩了六次：
+ * `Number.isFinite(Number(null))` 是 `true`，于是「没有数据」被悄悄当成
+ * 「数据是 0」—— 影响因子缺失显示成 0.0、百分位缺失判成 Q4、天数缺失夹成 1。
+ * 所有「可能有值、也可能没有」的数字转换都应该走这里。
+ *
+ * @param {unknown} value
+ * @returns {number|null} 有限数字，或 null（表示「没有」）
+ */
+export function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'boolean') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+/**
  * 把各种写法的 ISSN 归一成 `1234-567X` 形式；认不出来返回 ''。
  * 支持 `02638231`、`0263-8231`、`0263 8231`、`ISSN 0263-8231`。
  */
@@ -64,13 +82,13 @@ export function normalizeIssn(value) {
  */
 export function journalScore(metrics) {
   if (metrics === null || typeof metrics !== 'object') return 0
-  const ifValue = Number(metrics.twoYearMeanCitedness)
-  if (Number.isFinite(ifValue) && ifValue > 0) {
+  const ifValue = finiteNumber(metrics.twoYearMeanCitedness)
+  if (ifValue !== null && ifValue > 0) {
     // log10(1+IF) / log10(11)：IF=10 正好打满 100
     return Math.min(100, Math.round((Math.log10(1 + Math.min(ifValue, 30)) / Math.log10(11)) * 100))
   }
-  const hIndex = Number(metrics.hIndex)
-  if (Number.isFinite(hIndex) && hIndex > 0) {
+  const hIndex = finiteNumber(metrics.hIndex)
+  if (hIndex !== null && hIndex > 0) {
     // 没有影响因子时用 h 指数粗略兜底：h=200 给 60 分
     return Math.min(60, Math.round((Math.min(hIndex, 200) / 200) * 60))
   }
@@ -137,7 +155,7 @@ export function citationScore(citations, publishedAt, now = Date.now()) {
  * @returns {{ score:number, tier:string, reasons:string[], impactFactor:number|null, journalHIndex:number|null }}
  */
 export function paperQuality(item, options = {}) {
-  const now = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now()
+  const now = finiteNumber(options.now) ?? Date.now()
   const lookup = options.journals
   const issn = normalizeIssn(item?.issn ?? '')
   let metrics = null
@@ -146,10 +164,11 @@ export function paperQuality(item, options = {}) {
   }
   if (metrics === undefined) metrics = null
 
-  const impactFactor = metrics !== null && Number.isFinite(Number(metrics.twoYearMeanCitedness))
-    ? Number(metrics.twoYearMeanCitedness)
-    : null
-  const journalHIndex = metrics !== null && Number.isFinite(Number(metrics.hIndex)) ? Number(metrics.hIndex) : null
+  // 必须用 finiteNumber 而不是 `Number.isFinite(Number(...))`：
+  // 期刊收录了但没有「近两年篇均被引」时 OpenAlex 给的是 null，`Number(null)` 是 0，
+  // `Number.isFinite(0)` 是 true —— 于是「没有这项数据」被写成「影响因子 0.0」。
+  const impactFactor = metrics !== null ? finiteNumber(metrics.twoYearMeanCitedness) : null
+  const journalHIndex = metrics !== null ? finiteNumber(metrics.hIndex) : null
 
   const jScore = journalScore(metrics)
   const percentile = item?.citationPercentile
@@ -259,12 +278,10 @@ export async function fetchJournalMetrics(issns, api) {
       const stats = source?.summary_stats !== null && typeof source?.summary_stats === 'object' ? source.summary_stats : {}
       out[key] = {
         name: String(source?.display_name ?? ''),
-        twoYearMeanCitedness: Number.isFinite(Number(stats['2yr_mean_citedness']))
-          ? Number(stats['2yr_mean_citedness'])
-          : null,
-        hIndex: Number.isFinite(Number(stats.h_index)) ? Number(stats.h_index) : null,
-        i10Index: Number.isFinite(Number(stats.i10_index)) ? Number(stats.i10_index) : null,
-        worksCount: Number.isFinite(Number(source?.works_count)) ? Number(source.works_count) : null,
+        twoYearMeanCitedness: finiteNumber(stats['2yr_mean_citedness']),
+        hIndex: finiteNumber(stats.h_index),
+        i10Index: finiteNumber(stats.i10_index),
+        worksCount: finiteNumber(source?.works_count),
         isCore: source?.is_core === true,
         isInDoaj: source?.is_in_doaj === true,
         type: String(source?.type ?? ''),

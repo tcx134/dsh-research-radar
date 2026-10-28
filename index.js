@@ -5,6 +5,7 @@ import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
 import { computeStats } from './radar/stats.js'
+import { buildGraph } from './radar/graph.js'
 import { buildLibrary } from './radar/library.js'
 import { normalizeSummaryDepth, summaryDepthOptions } from './radar/summarize.js'
 import path from 'node:path'
@@ -345,7 +346,24 @@ export function apply(ctx, config) {
                 days: url.searchParams.get('days'),
                 topicId: url.searchParams.get('topicId') ?? '',
                 sourceLabels: SOURCE_LABELS,
-              }),            )
+              }),
+            )
+            return
+          }
+
+          // 研究关系网：标签共现图 + 「还没交叉过的强主题」。
+          // days / topicId 过滤和 /state 一致，都是「我手上这批论文」的视图。
+          if (method === 'GET' && action === 'graph') {
+            const state = await store.load()
+            sendJson(
+              res,
+              200,
+              buildGraph(state.items, {
+                topics: state.topics,
+                days: url.searchParams.get('days'),
+                topicId: url.searchParams.get('topicId') ?? '',
+              }),
+            )
             return
           }
 
