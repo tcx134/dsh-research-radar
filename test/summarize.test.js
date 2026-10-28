@@ -82,7 +82,9 @@ test('summaryDepthOptions 给出面板要用的档位说明', () => {
   )
   const brief = options[0]
   assert.equal(brief.fields, 3)
-  assert.equal(brief.approxTokens, brief.abstractChars + brief.maxTokens)
+  // approxTokens 现在按「拿到全文」的预算算（全文才是长的那一头），
+  // 所以是 fullTextChars + maxTokens 而不是摘要长度。
+  assert.equal(brief.approxTokens, brief.fullTextChars + brief.maxTokens)
   assert.ok(brief.approxTokens < options[2].approxTokens)
 })
 

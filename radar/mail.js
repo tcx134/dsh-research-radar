@@ -260,11 +260,36 @@ function fieldRowHtml(label, value) {
  */
 function paperCardHtml(item, t) {
   const summary = item.summary !== null && typeof item.summary === 'object' ? item.summary : null
+  const quality = item.quality !== null && typeof item.quality === 'object' ? item.quality : null
+  const qualityLabel =
+    quality === null
+      ? ''
+      : quality.tier === 'high'
+        ? t('quality_high')
+        : quality.tier === 'medium'
+          ? t('quality_medium')
+          : quality.tier === 'low'
+            ? t('quality_low')
+            : ''
+  const impactFactor =
+    quality !== null && Number.isFinite(Number(quality.impactFactor)) ? Number(quality.impactFactor) : null
+  // 全文 vs 仅摘要：邮件里也要标出来，用户才知道「局限」那一栏可不可信
+  const basisLabel =
+    summary === null ? '' : summary.basis === 'fulltext' ? t('read_fulltext') : t('read_abstract')
+
   const chips = [
     item.topicName ? chipHtml(item.topicName, { color: MAIL_COLORS.accent, bg: MAIL_COLORS.accentSoft, bold: true }) : '',
+    qualityLabel !== ''
+      ? chipHtml(
+          quality !== null && Number.isFinite(Number(quality.score)) ? `${qualityLabel} ${quality.score}` : qualityLabel,
+          { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg, bold: true },
+        )
+      : '',
+    impactFactor !== null ? chipHtml(`${t('impact_factor')} ${impactFactor.toFixed(1)}`) : '',
     item.venue ? chipHtml(item.venue) : '',
     item.publishedAt ? chipHtml(String(item.publishedAt).slice(0, 10)) : '',
     item.source ? chipHtml(item.source) : '',
+    basisLabel !== '' ? chipHtml(basisLabel, { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg }) : '',
     item.openAccess === true ? chipHtml(t('open_access'), { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg, bold: true }) : '',
     item.matchedIn ? chipHtml(`${t('matched')} · ${item.matchedIn}`, { color: MAIL_COLORS.text, bg: MAIL_COLORS.okBg }) : '',
   ]
@@ -359,6 +384,12 @@ export function digestToHtml(items, topics, options = {}) {
           summary_failed: 'Summary failed:',
           no_abstract: 'No abstract available',
           cited: 'cited',
+          quality_high: 'High quality',
+          quality_medium: 'Medium',
+          quality_low: 'Low',
+          impact_factor: 'IF',
+          read_fulltext: 'Full text',
+          read_abstract: 'Abstract only',
           intro: (n) => `${n} new paper${n === 1 ? '' : 's'} in this round.`,
           papers: (n) => `${n} paper${n === 1 ? '' : 's'}`,
           open_panel: 'Open the radar panel',
@@ -377,6 +408,12 @@ export function digestToHtml(items, topics, options = {}) {
           summary_failed: '摘要生成失败：',
           no_abstract: '该库未提供摘要',
           cited: '被引',
+          quality_high: '高质量',
+          quality_medium: '中等',
+          quality_low: '较低',
+          impact_factor: '影响因子',
+          read_fulltext: '已读全文',
+          read_abstract: '仅摘要',
           intro: (n) => `本次共发现 ${n} 篇新论文。`,
           papers: (n) => `${n} 篇`,
           open_panel: '在面板中查看',

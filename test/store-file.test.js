@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { createStore, pruneSeen } from '../radar/store.js'
+import { quartileOf } from '../radar/quality.js'
 
 async function tempDir(t) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'drr-store-'))
@@ -207,4 +208,33 @@ test('maxPerTopic 缺省、脏值、超上限都会被夹到合法范围', async
   assert.equal((await storeWithMaxPerTopic(t, 'abc')).settings.scan.maxPerTopic, 15)
   assert.equal((await storeWithMaxPerTopic(t, 999)).settings.scan.maxPerTopic, 50)
   assert.equal((await storeWithMaxPerTopic(t, 0)).settings.scan.maxPerTopic, 1)
+})
+
+test('老 state 里没有 citationPercentile 时读成 null，不能变成 0（否则每篇都是 Q4）', async (t) => {
+  const dir = await tempDir(t)
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [],
+      // 三篇：字段缺失、显式 null、真有百分位
+      items: [
+        { id: 'a', title: 'no field' },
+        { id: 'b', title: 'explicit null', citationPercentile: null },
+        { id: 'c', title: 'has 92', citationPercentile: 92 },
+      ],
+      seen: {},
+      settings: {},
+    }),
+    'utf8',
+  )
+  const state = await createStore({}, { dataDir: dir }).load()
+  const byId = new Map(state.items.map((item) => [item.id, item]))
+  assert.equal(byId.get('a').citationPercentile, null)
+  assert.equal(byId.get('b').citationPercentile, null)
+  assert.equal(byId.get('c').citationPercentile, 92)
+  // 关键：null 不能过 `Number()` 变成 0，否则 quartileOf(0) 会判成 Q4
+  assert.equal(quartileOf(byId.get('a').citationPercentile), null)
+  assert.equal(quartileOf(byId.get('b').citationPercentile), null)
+  assert.equal(quartileOf(byId.get('c').citationPercentile), 'Q1')
 })

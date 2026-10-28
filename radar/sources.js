@@ -409,6 +409,7 @@ function finalize(items, query, max, localFilter, spread = false) {
 
 /** 供测试使用：本地过滤 + 严格相关性判定是「推给我的文章不相关」的根因所在。 */
 export { finalize, isExcluded }
+export { getText, mailtoParam, stripTags, decodeXml }
 
 /* -------------------------------- OpenAlex ------------------------------- */
 
@@ -446,6 +447,20 @@ function mailtoParam(api) {
   const mail = typeof api?.mailto === 'string' && api.mailto !== '' ? api.mailto : 'radar@example.com'
   const key = typeof api?.openalexKey === 'string' && api.openalexKey !== '' ? api.openalexKey : ''
   return `&mailto=${encodeURIComponent(mail)}${key === '' ? '' : `&api_key=${encodeURIComponent(key)}`}`
+}
+
+/**
+ * OpenAlex 的 `cited_by_percentile_year` 是 `{min, max}`（有时是数字），
+ * 表示「同年同领域被引排在第 X 百分位」。取上限 `max` —— 下限偏保守。
+ * 论文太新还没算出来时是 `null`，这时返回 `null` 而不是 0：
+ * 「没算出来」和「排位 0」是两回事，后者会把新论文误判成没人看。
+ */
+function percentileOf(value) {
+  if (value === null || typeof value !== 'object') return null
+  const max = Number(value.max)
+  if (Number.isFinite(max)) return Math.max(0, Math.min(100, max))
+  const min = Number(value.min)
+  return Number.isFinite(min) ? Math.max(0, Math.min(100, min)) : null
 }
 
 /** OpenAlex 的摘要以倒排索引形式返回，这里还原成正常句子。 */
@@ -531,7 +546,7 @@ async function fetchOpenAlexPage({ filter, perPage, sort, api }) {
   const url =
     'https://api.openalex.org/works?filter=' +
     encodeFilter(filter) +
-    `&per-page=${perPage}&sort=${sort}&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,open_access,type` +
+    `&per-page=${perPage}&sort=${sort}&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,cited_by_percentile_year,open_access,type` +
     mailtoParam(api)
   const payload = JSON.parse(await getText(url))
   return Array.isArray(payload?.results) ? payload.results : []
@@ -572,6 +587,10 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
       ? work.authorships.map((a) => String(a?.author?.display_name ?? '').trim()).filter(Boolean)
       : []
     const venue = String(work?.primary_location?.source?.display_name ?? '')
+    // 期刊 ISSN 是查「期刊影响因子 / h 指数」的钥匙，没有它就只能靠标题猜刊名。
+    const issn = String(work?.primary_location?.source?.issn_l ?? '')
+    // 开放获取论文的 PDF 直链 —— 有了它就能抓全文，而不是只喂摘要。
+    const oaPdfUrl = String(work?.best_oa_location?.pdf_url ?? '')
     const id = String(work?.id ?? '').split('/').pop()
     return {
       id: `openalex:${normalizeId(doi !== '' ? doi : id)}`,
@@ -582,9 +601,14 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
       url: doi !== '' ? `https://doi.org/${doi}` : String(work?.id ?? ''),
       abstract: invertAbstract(work?.abstract_inverted_index),
       venue,
+      issn,
       doi,
       citations: Number.isFinite(work?.cited_by_count) ? work.cited_by_count : 0,
+      // 被引在同年度同领域里的百分位（0–100）。原始被引数在不同学科之间没法比，
+      // 百分位可以 —— 工程类被引 10 次可能已是前 5%，生物类 10 次只是中游。
+      citationPercentile: percentileOf(work?.cited_by_percentile_year),
       openAccess: work?.open_access?.is_oa === true,
+      oaPdfUrl,
     }
   })
 
@@ -673,7 +697,7 @@ export async function fetchCrossref({ query, max, api, lookbackDays = 30 }) {
   params.set('rows', String(Math.min(100, Math.max(20, max * 8))))
   params.set(
     'select',
-    'DOI,title,container-title,published,author,abstract,is-referenced-by-count,URL',
+    'DOI,title,container-title,ISSN,published,author,abstract,is-referenced-by-count,URL',
   )
   const mail = typeof api?.mailto === 'string' && api.mailto !== '' ? api.mailto : 'radar@example.com'
   params.set('mailto', mail)
@@ -695,6 +719,7 @@ export async function fetchCrossref({ query, max, api, lookbackDays = 30 }) {
       url: doi !== '' ? `https://doi.org/${doi}` : String(row?.URL ?? ''),
       abstract: stripTags(row?.abstract ?? ''),
       venue: String(row?.['container-title']?.[0] ?? ''),
+      issn: Array.isArray(row?.ISSN) ? String(row.ISSN[0] ?? '') : String(row?.ISSN ?? ''),
       doi,
       citations: Number.isFinite(row?.['is-referenced-by-count']) ? row['is-referenced-by-count'] : 0,
     }

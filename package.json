@@ -21,6 +21,8 @@
     "radar/summarize.js",
     "radar/mail.js",
     "radar/scan.js",
+    "radar/quality.js",
+    "radar/fulltext.js",
     "radar/stats.js",
     "radar/library.js",
     "locale/en.json",

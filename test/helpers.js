@@ -9,7 +9,9 @@ import path from 'node:path'
  */
 export async function tempDir(t) {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'drr-test-'))
-  t.after(() => fsp.rm(dir, { recursive: true, force: true }))
+  // 插件里可能有后台任务还在往这个目录写（期刊缓存等），Windows 上直接 rm 会
+  // 撞 EBUSY / ENOTEMPTY，用带重试的 rm 让它在几百毫秒内自己收敛。
+  t.after(() => fsp.rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }))
   return dir
 }
 

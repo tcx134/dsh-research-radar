@@ -77,6 +77,8 @@ test('defaultSettings 的 scan 默认值没被改坏', () => {
   assert.equal(d.scan.lookbackDays, 30)
   assert.equal(d.scan.summarize, true)
   assert.equal(d.scan.summaryDepth, 'standard')
+  // 抓全文再总结默认开：这是摘要质量的主要来源
+  assert.equal(d.scan.fullText, true)
   assert.equal(d.mail.enabled, false)
   assert.equal(d.mail.port, 465)
   assert.deepEqual(d.rss, [])

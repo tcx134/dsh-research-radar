@@ -25,6 +25,8 @@ export function defaultSettings() {
       summarize: true,
       // 解析深度：brief（一句话+创新点，最省 token）/ standard / deep（全字段）
       summaryDepth: DEFAULT_SUMMARY_DEPTH,
+      // 抓全文再总结：比只看摘要准得多，但每篇要多花几秒到二十秒网络时间
+      fullText: true,
       lookbackDays: 30,
       lastScanAt: null,
       lastScanNew: 0,
@@ -166,11 +168,21 @@ function normalizeItem(raw) {
     url: asString(raw.url),
     abstract: asString(raw.abstract),
     venue: asString(raw.venue),
+    issn: asString(raw.issn),
     doi: asString(raw.doi),
     citations: asNumber(raw.citations, 0),
+    // 同年同领域被引百分位（0–100）。老 state 里没有这个字段，读到就是 null ——
+    // 表示「这篇没算过百分位」，质量分会退回年化被引，不会崩也不会误判成末档。
+    // 注意必须显式挡 null / ''：`Number(null) === 0` 会让每篇老论文都变成
+    // 「被引排最后」（百分位 0 → Q4），这正是 quality.js 里堵过的同一个坑。
+    citationPercentile: Number.isFinite(Number(raw.citationPercentile)) && raw.citationPercentile !== null
+      ? Number(raw.citationPercentile)
+      : null,
     openAccess: asBool(raw.openAccess, false),
+    oaPdfUrl: asString(raw.oaPdfUrl),
     matchedIn: asString(raw.matchedIn),
     score: asNumber(raw.score, 0),
+    quality: raw.quality && typeof raw.quality === 'object' ? raw.quality : null,
     summary: raw.summary && typeof raw.summary === 'object' ? raw.summary : null,
     summaryError: asString(raw.summaryError),
     discoveredAt: asString(raw.discoveredAt, new Date().toISOString()),
@@ -267,6 +279,7 @@ function normalize(raw) {
       maxPerTopic: migrateMaxPerTopic(asNumber(scan.maxPerTopic, d.scan.maxPerTopic)),
       summarize: asBool(scan.summarize, d.scan.summarize),
       summaryDepth: normalizeSummaryDepth(scan.summaryDepth),
+      fullText: asBool(scan.fullText, d.scan.fullText),
       lookbackDays: Math.min(3650, Math.max(1, asNumber(scan.lookbackDays, d.scan.lookbackDays))),
       lastScanAt: typeof scan.lastScanAt === 'string' ? scan.lastScanAt : null,
       lastScanNew: asNumber(scan.lastScanNew, 0),
