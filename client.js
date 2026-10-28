@@ -218,6 +218,8 @@ window.__ModuleLoader__.load({
         graph_need_hub: '一个主题至少要出现在这么多篇论文里',
         graph_empty: '还没有足够的标签来画关系网。先跑几次扫描，攒到十来篇论文再看。',
         graph_load_failed: '关系网加载失败',
+        graph_need_restart: '关系网的后端还没生效：面板已经是新版本，但后台插件还是旧版本。',
+        graph_need_restart_hint: '重启一次桌面应用（或停用再启用这个插件）就能用了。重启后关系网会直接出现在这个页签里。',
         graph_nodes: '主题',
         graph_edges: '关联',
         graph_density: '关联密度',
@@ -439,6 +441,8 @@ window.__ModuleLoader__.load({
         graph_need_hub: 'a theme must appear in at least this many papers',
         graph_empty: 'Not enough tags to draw a network yet. Run a few scans and come back after a dozen papers.',
         graph_load_failed: 'Failed to load the network',
+        graph_need_restart: 'The network backend is not live yet: the panel is new but the plugin running behind it is still the old build.',
+        graph_need_restart_hint: 'Restart the desktop app once (or disable and re-enable this plugin) and it will work. After the restart the network shows up in this tab directly.',
         graph_nodes: 'Themes',
         graph_edges: 'Links',
         graph_density: 'Density',
@@ -644,7 +648,14 @@ window.__ModuleLoader__.load({
       }
       return fetch(`${API}/${action}`, init).then(async (res) => {
         const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+        if (!res.ok) {
+          const error = new Error(data.error || `HTTP ${res.status}`)
+          // 405 在这里有很具体的含义：路由根本没注册。插件的 Client 半边由宿主
+          // 按文件改动自动换 bundle，Host 半边却要重启进程才换 —— 所以面板已经是新的、
+          // 后端还是旧的，表现就是「method not allowed」。带上状态码让界面能说清原因。
+          error.status = res.status
+          throw error
+        }
         return data
       })
     }
@@ -1540,6 +1551,8 @@ window.__ModuleLoader__.load({
       const [graph, setGraph] = React.useState(null)
       const [graphDays, setGraphDays] = React.useState(365)
       const [graphError, setGraphError] = React.useState('')
+      // 单独存状态码：405 表示后端还是旧版本（路由没注册），和「真的加载失败」不是一回事
+      const [graphErrorStatus, setGraphErrorStatus] = React.useState(0)
       // 点了某个主题之后，高亮它和它的邻居（不做二次请求，纯前端筛选）
       const [graphFocus, setGraphFocus] = React.useState('')
 
@@ -1620,12 +1633,16 @@ window.__ModuleLoader__.load({
       /** 关系网：同样按需加载。 */
       const loadGraph = React.useCallback(() => {
         setGraphError('')
+        setGraphErrorStatus(0)
         const params = new URLSearchParams()
         if (graphDays > 0) params.set('days', String(graphDays))
         if (topicFilter !== '') params.set('topicId', topicFilter)
         return api(`graph?${params.toString()}`)
           .then(setGraph)
-          .catch((error) => setGraphError(error.message))
+          .catch((error) => {
+            setGraphError(error.message)
+            setGraphErrorStatus(Number(error.status) || 0)
+          })
       }, [graphDays, topicFilter])
 
       React.useEffect(() => {
@@ -2222,7 +2239,21 @@ window.__ModuleLoader__.load({
 
       const graphTab = (() => {
         if (graphError !== '') {
-          return h('div', { className: 'drr-note drr-note-err' }, `${t('graph_load_failed')}: ${graphError}`)
+          // 405 不是「加载失败」，是后端还是旧版本。两种情况给的话完全不同：
+          // 说「加载失败」会让人以为是网络或数据问题，其实重启一下就好了。
+          const stale = graphErrorStatus === 405
+          return h(
+            'div',
+            { className: 'drr-note drr-note-err' },
+            stale
+              ? h(
+                  'div',
+                  null,
+                  h('div', null, t('graph_need_restart')),
+                  h('div', { className: 'drr-hint' }, t('graph_need_restart_hint')),
+                )
+              : `${t('graph_load_failed')}: ${graphError}`,
+          )
         }
         if (graph === null) {
           return h('div', { className: 'drr-empty' }, '…')

@@ -77,7 +77,7 @@
 ```
 研究方向：金属橡胶  keywords = metal rubber, MR, EMWM  sources = openalex, crossref
           matchMode = any  strict = true
-SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
+SMTP：    smtp.163.com:465 SSL  <发件邮箱> → <收件邮箱>  已启用
 数据：    旧机 C:\Users\<user>\.dsh\research-radar\state.json
           新机 C:\Users\<user>\.dsh\research-radar\state.json（本次新建：只有「金属橡胶」方向、无邮箱）
 ```

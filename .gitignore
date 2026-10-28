@@ -24,3 +24,6 @@ radar-state.json
 # 本仓库刚好是 cwd，别让它混进提交
 data/
 qq_autopilot/
+
+# 面板截图可能露出真实邮箱与收件人，不随仓库发布
+docs/
