@@ -556,6 +556,11 @@ export function apply(ctx, config) {
               lookbackDays: result.lookbackDays ?? null,
               // 本次用的解析深度（brief / standard / deep），面板会显示出来
               summaryDepth: result.summaryDepth ?? null,
+              // 这次扫描后按全文总结了几篇
+              fullTextCount: result.fullTextCount ?? 0,
+              // 这次扫描末尾给多少篇老论文重算了质量分（补 ISSN + 影响因子）
+              backfilled: result.backfilled ?? 0,
+              qualityTiers: result.qualityTiers ?? null,
               errors: result.errors,
               mail: result.mail,
               items: result.newItems,
@@ -805,6 +810,10 @@ export function apply(ctx, config) {
             lookbackDays: result.lookbackDays ?? null,
             // 本次用的解析深度（brief / standard / deep）
             summaryDepth: result.summaryDepth ?? null,
+            // 这次扫描后按全文总结了几篇
+            fullTextCount: result.fullTextCount ?? 0,
+            // 这次扫描末尾给多少篇老论文重算了质量分
+            backfilled: result.backfilled ?? 0,
             errors: result.errors,
             items: result.newItems.map((i) => ({
               title: i.title,

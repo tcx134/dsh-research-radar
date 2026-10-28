@@ -102,6 +102,9 @@ window.__ModuleLoader__.load({
         last_scan: '上次扫描',
         scan_window: '本次窗口',
         days_unit: '天',
+        read_fulltext: '读全文',
+        papers_unit: '篇',
+        backfilled: '补算老论文',
         last_mail: '上次发送邮件',
         never: '从未',
         tldr: '一句话',
@@ -298,6 +301,9 @@ window.__ModuleLoader__.load({
         last_scan: 'Last scan',
         scan_window: 'Window',
         days_unit: 'd',
+        read_fulltext: 'Read full text:',
+        papers_unit: 'papers',
+        backfilled: 'Rescored older entries:',
         last_mail: 'Last email',
         never: 'never',
         tldr: 'TL;DR',
@@ -1334,6 +1340,13 @@ window.__ModuleLoader__.load({
             }
             if (typeof result.summaryDepth === 'string' && result.summaryDepth !== '') {
               facts.push(`${t('summary_depth')} ${t(`depth_${result.summaryDepth}`)}`)
+            }
+            // 这次有几篇是按全文读的、有几篇老论文重算了质量分 —— 都是「为什么这次看起来不一样」的答案
+            if (Number(result.fullTextCount) > 0) {
+              facts.push(`${t('read_fulltext')} ${result.fullTextCount} ${t('papers_unit')}`)
+            }
+            if (Number(result.backfilled) > 0) {
+              facts.push(`${t('backfilled')} ${result.backfilled} ${t('papers_unit')}`)
             }
             const meta = facts.length > 0 ? `（${facts.join(' · ')}）` : ''
             const errors = Array.isArray(result.errors) && result.errors.length > 0
