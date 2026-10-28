@@ -69,7 +69,7 @@
 - ✅ **全文精读**（arXiv / Europe PMC / OA PDF / 出版社 PDF 四条路线，拿到正文就按正文总结，
   拿不到自动回退摘要，见 11.15）
 - ✅ **面板更直接**（标题回到第一行、质量分与「凭什么」可展开、顶部状态条、六段细节默认收起，见 11.15）
-- ✅ **261 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **263 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -107,7 +107,7 @@ I:\skill\dsh-research-radar\
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 │   ├── library.js  169 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
 │   └── graph.js    231 行 研究关系网（标签共现图 + 强主题之间的空档）
-├── test/                 19 个文件 / 261 个用例（node:test，零依赖）
+├── test/                 19 个文件 / 263 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -344,7 +344,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，261 个用例，~7.5s）
+# 0. 单测（最快，263 个用例，~7.5s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -511,15 +511,15 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 
 ### P3 —— 工程化
 
-**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 261 个）
-`node --test test/*.test.js`，**261 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 263 个）
+`node --test test/*.test.js`，**263 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 连字符折叠、语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、
 HTTP 路由、Config schema、趋势统计、论文库分架、邮件 HTML、质量分（对数曲线 / 百分位分区 / 缺信号先验）、
 全文抽取（HTML / PMC XML / PDF / 四条路线）、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 261 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 263 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -802,10 +802,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（261 个用例，全部通过）
+### 11.4 测试（263 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 261 / fail 0
+node --test test/*.test.js   →   pass 263 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -826,11 +826,11 @@ node --test test/*.test.js   →   pass 261 / fail 0
 | `test/config.test.js` | 8 | `~standard` 契约、默认回填、trim、enum、未知字段忽略 |
 | `test/stats.test.js` | 11 | `weekStart` 归周一、窗口夹取（含 `null`→90）、补空周、榜单排序、坏/未来时间戳 |
 | `test/mail.test.js` | 10 | 无 `<style>` 无 `class=`、卡片边色、字段渲染、HTML 转义、挡 `javascript:`、中英文 |
-| `test/index.test.js` | 14 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、`GET /graph`、`GET /library`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
+| `test/index.test.js` | 15 | 路由注册、marker/loopback/content-type 校验、topics/settings/preview/scan、`GET /stats`、`GET /graph`、`GET /library`、解析深度档位与设置、`POST /scan` 强制窗口、Agent 工具 |
 | `test/summarize.test.js` | 8 | 三档字段集、`abstractChars`/`maxTokens` 严格递增、`summaryDepthOptions`、`buildSystemPrompt` 只列当前档、`buildUserMessage` 按档截断、`summarizePaper` 精简档与深度档 |
 | `test/library.test.js` | 13 | `yearOf` 只认开头四位、`freshnessOf` 90/365 天边界与未来日期、按年份分架与排序、无日期归「未知」、架内排序三级兜底、summary 计数、行只带精简字段、按方向分架与「未分类」、topicId 过滤、脏数据、空库、每架老论文数/未读数 |
-| `test/graph.test.js` | 16 | 共现边权重、重复标签只算一次、方向名与关键词合并同一概念（`nodeCount 1` / `label 金属橡胶` / `weight 3`）、合并后无自环、单字标签丢弃、节点上限、空档只从强主题找且排除已连边、弱主题不参与、空档数量上限、`fresh` 判定、脏输入安全、tags 非字符串安全、密度自洽、无标签论文只计 papers、`days` 窗口过滤、`topicId` 过滤 |
-| `test/client-smoke.test.js` | 20 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、**关系网 3 例**（节点/连线/空档、聚焦与换窗口、加载失败）、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境、**质量徽章 + 分区徽章** |
+| `test/graph.test.js` | 17 | 共现边权重、重复标签只算一次、方向名与关键词合并同一概念（`nodeCount 1` / `label 金属橡胶` / `weight 3`）、合并后无自环、单字标签丢弃、节点上限、空档只从强主题找且排除已连边、弱主题不参与、空档数量上限、`fresh` 判定、脏输入安全、tags 非字符串安全、密度自洽、无标签论文只计 papers、`days` 窗口过滤、`topicId` 过滤、`stats.hubCount` 区分两种「没有空档」 |
+| `test/client-smoke.test.js` | 21 | 极简 React 替身跑首屏渲染、筛选点击、POST `/item`、加载更多、**精读 2 例**、**关系网 3 例**（节点/连线/空档、聚焦与换窗口、加载失败）、趋势页 2 例、**论文库 2 例**、方向表单语言 3 例、设置页预设/深度/回溯 2 例、英文环境、**质量徽章 + 分区徽章** |
 
 `test/helpers.js` 提供 `tempDir(t)` / `makeCtx()` / `call(ctx,req)` / `seedState(dir,state)`。
 
@@ -1474,9 +1474,9 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 | `test/fulltext.test.js` | 17 | arXiv 编号识别 / HTML 转文本 / PMC body 抽取 / PDF 抽取 / 非 PDF 安全 / 可读性判定 / 截断 / 四条路线回退 / 限定路线 / `citation_pdf_url` / 域名拼 `/pdf` / 订阅制快速失败 / 预算共享 / 换 UA 重试 / 验证页快速放弃 |
 | `test/scan.test.js` | 30 | 新增「按设置决定是否抓全文」（关掉时只发 1 个 RSS 请求，不碰 doi.org）、`backfillQuality` 4 例、`ensureIssns` 3 例、**「有分数但缺 ISSN」也会重算**、**补不到 ISSN 不抹掉已有分数** |
 | `test/store.test.js` | 9 | 默认值加 `fullText: true` |
-| `test/client-smoke.test.js` | 20 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`**；**关系网 3 例**（见 11.16.4） |
+| `test/client-smoke.test.js` | 21 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`**；**关系网 3 例**（见 11.16.4） |
 
-合计 **261 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
+合计 **263 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
 
 #### 11.15.6 老论文补 ISSN 与重算（实测）
 
@@ -1652,10 +1652,21 @@ Structures，IF 8.51）、79（Polymers，IF 7.91）。
 | `radar/graph.js`（231 行） | 纯函数 `buildGraph(items, {topics, days, topicId, now, recentDays})` → `{nodes, edges, gaps, stats}`；常量 `MAX_NODES 28` / `MAX_EDGES 90` / `HUB_MIN_WEIGHT 3` / `GAP_LIMIT 5` |
 | `index.js` | `GET /graph`（`?days=&topicId=`），紧跟 `/stats` 之后 |
 | `client.js` | `GraphView` 组件 + `layoutGraph()`；第 4 个页签「关系网」；`.drr-g-*` 一组样式 |
-| `test/graph.test.js`（16 例） | 见 11.4 测试表 |
+| `test/graph.test.js`（17 例） | 见 11.4 测试表 |
 
 空档打分：`score = sqrt(a.weight * b.weight) + min(a.recent, b.recent)` —— 前半句是「两边都够热」，
 后半句是「最近还在活跃」，都重要。
+
+**空清单的两种原因要分开说**（`stats.hubCount` + `stats.hubMinWeight` 就是为此加的）：
+真实库跑一遍就能看到问题 —— 默认 1 年窗口里只有 2 个主题够热，而且它们已经连过线，
+于是「可能存在的新方向」是空的。用户看到空白只会以为功能坏了。所以：
+
+| 情况 | 界面文案 |
+| --- | --- |
+| `hubCount < 2` | 「还看不出空档：够热的主题太少……把时间范围放宽、或者多跑几次扫描」（附门槛：一个主题至少要出现在 3 篇论文里） |
+| `hubCount >= 2` 但 `gaps` 为空 | 「暂时没发现明显的空档 —— 主题之间的连线已经比较密了」（这是好消息） |
+
+这个区分在 `client.js` 的 `gapsEmptyHint(stats, t)` 里，两句话都写了中英双语。
 
 ### 11.16.5 踩坑
 

@@ -234,6 +234,11 @@ export function buildGraph(items, options = {}) {
       taggedPapers: used.filter((item) => item.summary !== null && typeof item.summary === 'object').length,
       nodeCount: nodeList.length,
       edgeCount: edgeList.length,
+      // 够格参与「新方向」判断的强主题数。判空档提示要用它区分两种情况：
+      // 「主题太少还没法判断」和「主题够多但都已经连起来了」，两者给用户的话完全不同。
+      hubCount: hubs.length,
+      // 空档门槛，前端提示里要显示出来（「至少 3 篇」比「不够」有用）
+      hubMinWeight: HUB_MIN_WEIGHT,
       // 密度：已连边 / 最多可能连边。低密度 = 主题之间还很散
       density:
         nodeList.length > 1

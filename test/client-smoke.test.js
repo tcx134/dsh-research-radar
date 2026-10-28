@@ -707,6 +707,44 @@ test('关系网加载失败时给出错误提示而不是白屏', async () => {
   }
 })
 
+test('关系网没有空档时，用两种不同的话说明原因', async () => {
+  const base = {
+    nodes: [
+      { id: '甲', label: '甲', weight: 4, recent: 4, tier: 'high', fresh: true },
+      { id: '乙', label: '乙', weight: 4, recent: 4, tier: 'high', fresh: true },
+    ],
+    edges: [{ source: '甲', target: '乙', weight: 4, recent: 4 }],
+    gaps: [],
+    stats: { papers: 8, taggedPapers: 8, nodeCount: 2, edgeCount: 1, density: 1, hubCount: 2, hubMinWeight: 3 },
+  }
+  // 每次都要重新挂载：/graph 只在 graphDays / topicFilter 变化时才重拉，
+  // 只改 body 再 mount 不会触发请求，会读到上一次的结果。
+  const render = async (graphBody) => {
+    const mini = makeReact()
+    const { Panel } = await loadClient(mini.React)
+    const fetchStub = installFetch((url) => ({ body: url.includes('/graph') ? graphBody : sampleState() }))
+    try {
+      let tree = await mount(mini, Panel)
+      buttonByText(tree, '关系网').props.onClick()
+      tree = await mount(mini, Panel)
+      return textOf(tree)
+    } finally {
+      fetchStub.restore()
+    }
+  }
+
+  // ① 主题够多、但都已经连起来了 → 这是好消息，不是没数据
+  const dense = await render(base)
+  assert.match(dense, /连线已经比较密/)
+  assert.doesNotMatch(dense, /够热的主题太少/)
+
+  // ② 够热的主题不足两个 → 说明是样本不够，别让用户以为功能坏了
+  const thin = await render({ ...base, stats: { ...base.stats, hubCount: 1 } })
+  assert.match(thin, /够热的主题太少/)
+  assert.match(thin, /至少要出现在这么多篇论文里 3 篇/, '要把门槛说清楚，别只说「不够」')
+  assert.doesNotMatch(thin, /连线已经比较密/)
+})
+
 test('趋势页会拉 /stats 并渲染周柱状图与榜单', async () => {
   const mini = makeReact()
   const { Panel } = await loadClient(mini.React)

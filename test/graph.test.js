@@ -102,6 +102,23 @@ test('权重低于门槛的弱主题不参与「新方向」', () => {
   const labels = g.gaps.flatMap((gap) => [gap.aLabel, gap.bLabel])
   assert.ok(!labels.includes('乙丙'))
   assert.ok(!labels.includes('丙丁'))
+  // hubCount 只数够格的主题，前端靠它区分「主题太少」和「都已经连满了」
+  assert.equal(g.stats.hubCount, 1)
+  assert.equal(g.stats.hubMinWeight, HUB_MIN_WEIGHT)
+})
+
+test('stats.hubCount 数的是够格主题数，用来区分两种「没有空档」', () => {
+  const hot = []
+  for (let i = 0; i < HUB_MIN_WEIGHT; i += 1) hot.push(paper(`t${i}`, ['热甲']))
+  for (let i = 0; i < HUB_MIN_WEIGHT; i += 1) hot.push(paper(`u${i}`, ['热乙']))
+  const both = buildGraph(hot)
+  assert.equal(both.stats.hubCount, 2)
+  assert.equal(both.gaps.length, 1, '两个热主题从没同篇出现过 → 一条空档')
+
+  // 只有一边够热：谈不上「交叉」，空档为空但 hubCount 能说明原因
+  const one = buildGraph(hot.slice(0, HUB_MIN_WEIGHT))
+  assert.equal(one.stats.hubCount, 1)
+  assert.equal(one.gaps.length, 0)
 })
 
 test('缺口数量有上限，按「两边都热」排序', () => {

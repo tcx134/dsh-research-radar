@@ -214,6 +214,8 @@ window.__ModuleLoader__.load({
         graph_focus: '研究重点',
         graph_gaps: '可能存在的新方向',
         graph_no_gaps: '暂时没发现明显的空档 —— 主题之间的连线已经比较密了。',
+        graph_no_gaps_thin: '还看不出空档：够热的主题太少，彼此之间连不连线都说明不了什么。把时间范围放宽、或者多跑几次扫描攒够论文再来看。',
+        graph_need_hub: '一个主题至少要出现在这么多篇论文里',
         graph_empty: '还没有足够的标签来画关系网。先跑几次扫描，攒到十来篇论文再看。',
         graph_load_failed: '关系网加载失败',
         graph_nodes: '主题',
@@ -433,6 +435,8 @@ window.__ModuleLoader__.load({
         graph_focus: 'Research focus',
         graph_gaps: 'Possible new directions',
         graph_no_gaps: 'No obvious gaps right now — the themes are already well connected.',
+        graph_no_gaps_thin: 'No gaps visible yet: too few themes are hot enough for their (missing) links to mean anything. Widen the time range or scan a few more times.',
+        graph_need_hub: 'a theme must appear in at least this many papers',
         graph_empty: 'Not enough tags to draw a network yet. Run a few scans and come back after a dozen papers.',
         graph_load_failed: 'Failed to load the network',
         graph_nodes: 'Themes',
@@ -1324,6 +1328,22 @@ window.__ModuleLoader__.load({
       return out
     }
 
+    /**
+     * 「没有发现新方向」时该说什么。
+     *
+     * 空清单有两种完全不同的原因，混成一句话会让用户以为功能坏了：
+     *   ① 够格的热门主题还不到两个（或都没连起来）→ 是「样本不够」，让他加长窗口；
+     *   ② 热门主题已经互相连满了 → 是「这块已经很密」，这是好消息，不是没数据。
+     */
+    function gapsEmptyHint(stats, t) {
+      const hubs = Number(stats && stats.hubCount) || 0
+      const minWeight = Number(stats && stats.hubMinWeight) || 0
+      if (hubs < 2) {
+        return `${t('graph_no_gaps_thin')}${minWeight > 0 ? `（${t('graph_need_hub')} ${minWeight} ${t('graph_weight')}）` : ''}`
+      }
+      return t('graph_no_gaps')
+    }
+
     /** 关系网页签：一张 SVG 图 + 「可能存在的新方向」清单。 */
     function GraphView({ t, graph, days, onDays, focus, onFocus }) {
       const nodes = Array.isArray(graph.nodes) ? graph.nodes : []
@@ -1448,7 +1468,7 @@ window.__ModuleLoader__.load({
             ),
         h('div', { className: 'drr-list-title', style: { marginTop: '16px' } }, t('graph_gaps')),
         gaps.length === 0
-          ? h('div', { className: 'drr-hint' }, t('graph_no_gaps'))
+          ? h('div', { className: 'drr-hint' }, gapsEmptyHint(stats, t))
           : gaps.map((gap) =>
               h(
                 'div',
