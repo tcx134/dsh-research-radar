@@ -69,7 +69,7 @@
 - ✅ **全文精读**（arXiv / Europe PMC / OA PDF / 出版社 PDF 四条路线，拿到正文就按正文总结，
   拿不到自动回退摘要，见 11.15）
 - ✅ **面板更直接**（标题回到第一行、质量分与「凭什么」可展开、顶部状态条、六段细节默认收起，见 11.15）
-- ✅ **239 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
+- ✅ **241 个 `node:test` 单测**（零依赖，`node --test test/*.test.js`）
 - ✅ **本地 git 提交**：`71c6c20`（29 文件 / +5064 −212），用的是本轮现装的 MinGit 2.56.0（见第十一节 11.10）
 
 ### 用户当前的实盘配置（旧机器记录，新机器上还没迁过来）
@@ -92,8 +92,8 @@ SMTP：    smtp.163.com:465 SSL  <REDACTED> → <REDACTED>  已启用
 I:\skill\dsh-research-radar\
 ├── package.json          manifest（dsh.bundle.patch + dsh.client + files + scripts.test）
 ├── cordis.patch.yml      insert 一行：id=dsh-research-radar, name=@local/dsh-research-radar
-├── index.js       840 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
-├── client.js     2357 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
+├── index.js       849 行 Host 半边：HTTP 路由 / 定时器 / research_radar Agent 工具 / 分页
+├── client.js     2370 行 Client 半边：侧边栏图标 + 主面板（React，主题 token）
 ├── radar/
 │   ├── config.js   119 行 Config schema（手写 Standard Schema v1，零依赖）
 │   ├── dedupe.js   125 行 跨源去重键（DOI / arXiv / 标题+年份 / 源内 ID）
@@ -103,10 +103,10 @@ I:\skill\dsh-research-radar\
 │   ├── mail.js     581 行 纯 Node SMTP over TLS（零依赖）+ 邮件 HTML 卡片渲染
 │   ├── scan.js     611 行 扫描编排（增量窗口 + 全文抓取 + 并发摘要 + 质量回填 + 补 ISSN）+ 摘要邮件正文
 │   ├── quality.js  421 行 质量分（期刊影响因子 / 被引百分位与 Q1–Q4 分区 / 开放获取 → 0–100 + 档位）+ DOI 反查 ISSN
-│   ├── fulltext.js 538 行 全文抓取（arXiv / Europe PMC / OA PDF / 出版社 PDF → 纯文本）
+│   ├── fulltext.js 598 行 全文抓取（arXiv / Europe PMC / OA PDF / 出版社 PDF → 纯文本）
 │   ├── stats.js    182 行 趋势统计（周序列 / 来源 / 期刊 / 作者 / 标签榜单）
 │   └── library.js  165 行 论文库书架（按发表年份 / 方向分架 + 新老判定）
-├── test/                 18 个文件 / 239 个用例（node:test，零依赖）
+├── test/                 18 个文件 / 241 个用例（node:test，零依赖）
 ├── locale/{zh,en}.json  显示元数据
 ├── icon.svg              原创雷达图标
 ├── docs/                 面板截图（panel-items / panel-form / panel-preview）
@@ -342,7 +342,7 @@ POST 中文要注意：PowerShell `ConvertTo-Json` 默认编码会把中文写�
 $node = 'C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 $root = 'I:\skill\dsh-research-radar'
 
-# 0. 单测（最快，239 个用例，~7.5s）
+# 0. 单测（最快，241 个用例，~7.5s）
 #    在 DSH 沙箱里要加 --experimental-test-isolation=none，否则 spawn EPERM
 & $node --test --experimental-test-isolation=none "$root/test/*.test.js"
 
@@ -509,15 +509,15 @@ Invoke-RestMethod -Uri "$($env:DSH_WEB_URL)/api/dsh-research-radar/preview" -Met
 
 ### P3 —— 工程化
 
-**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 239 个）
-`node --test test/*.test.js`，**239 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
+**13. 单元测试** ✅ 已完成（2026-10-21，2026-10-27 扩到 241 个）
+`node --test test/*.test.js`，**241 个用例**，零依赖。覆盖去重键、seen 剪枝、检索打分 / strict 过滤、
 连字符折叠、语言过滤、并发限流、增量窗口、解析深度分档、按年份摊开配额（`spreadByYear`）、分页筛选、
 HTTP 路由、Config schema、趋势统计、论文库分架、邮件 HTML、质量分（对数曲线 / 百分位分区 / 缺信号先验）、
 全文抽取（HTML / PMC XML / PDF / 四条路线）、客户端面板渲染冒烟。
 **坑 1**：`node --test test/`（只给目录）在 Node 24 会报 `Cannot find module 'I:\...\test'`，必须写 glob（`test/*.test.js`）或显式列文件。
 **坑 2**：在 DSH 的 Windows 沙箱里，`node --test` 的**默认进程隔离**会 `spawn EPERM` ——
 测试运行器要用管道 stdio 起子进程，而沙箱禁止程序打开命名管道。加上 `--experimental-test-isolation=none`
-（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 239 pass。
+（同进程串行跑）就正常：`node --test --experimental-test-isolation=none test/*.test.js` → 241 pass。
 这不是代码问题，换到普通终端（或 danger-full-access）用原来的命令即可。
 
 **14. git remote** ⬜ 仍不推 GitHub（用户决策：只做本地提交）。本地提交这一半已补上：
@@ -791,7 +791,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `radar/summarize.js` | **`SUMMARY_DEPTHS=['brief','standard','deep']`** + `DEFAULT_SUMMARY_DEPTH='standard'`；`FIELD_SPECS` / `DEPTH_SPECS`（字段集 + `abstractChars` + `maxTokens`）；`normalizeSummaryDepth()` / `summaryDepthSpec()` / `summaryDepthOptions()` / `buildSystemPrompt(depth)`；`summarizePaper(...,depth)` 并把 `summary.depth` 写进结果 |
 | `radar/scan.js` | `mapLimit()` + `SUMMARY_CONCURRENCY=3` + `summarizeOne()`；`selectFresh(candidates, seen)`；`effectiveLookbackDays()` + `MIN_LOOKBACK_DAYS=30`（增量窗口下限，配置上限 3650 天；30 天是为了兜住「出版日期几天前、今天才进索引」的延迟收录）；`resolvePanelUrl(ctx)`；`spread: shouldSpread(topicLookback)`；`result.summaryDepth` / `result.lookbackDays`；邮件改 `digestToHtml`；locale 从 `config.locale` 读；**`ensureIssns()`（扫描前给缺 ISSN 的新论文用 DOI 反查补上）+ `backfillQuality()`（扫描末尾重算缺前提的老论文，判据是「有没有 ISSN」而不是「有没有 quality」）+ `result.backfilled` / `result.fullTextCount` / `result.qualityTiers`** |
 | `radar/quality.js` | **新增**（421 行）。`normalizeIssn` / `journalScore`（对数曲线）/ `citationScore`（年化）/ `citationPercentileScore` / `quartileOf`（Q1–Q4）/ `paperQuality` / `fetchJournalMetrics`（ISSN 批量，50 一批）/ `createJournalCache`（30 天，查不到的也记 missing）/ **`resolveIssnsByDoi`（DOI 批量反查 ISSN，`filter=doi:a\|b` 只能写一次字段前缀）** |
-| `radar/fulltext.js` | **新增**（538 行）。`arxivIdOf` / `htmlToText` / `extractPmcBody` / `pdfToText`（纯 `node:zlib`，按 `latin1` 解，TJ 字距补空格）/ `looksLikeProse` / `condenseText`（保头 55% + 保尾 45%）/ `stripLeadingBoilerplate` / `fetchFullText`（四条路线 + 总预算共享 + 订阅制 `CLOSED_HOSTS` 快速失败）/ `resolveDoiLanding`（失败重试一次） |
+| `radar/fulltext.js` | **新增**（598 行）。`arxivIdOf` / `htmlToText` / `extractPmcBody` / `pdfToText`（纯 `node:zlib`，按 `latin1` 解，TJ 字距补空格）/ `looksLikeProse` / `condenseText`（保头 55% + 保尾 45%）/ `stripLeadingBoilerplate` / `fetchFullText`（四条路线 + 总预算共享 + 订阅制 `CLOSED_HOSTS` 快速失败）/ `resolveDoiLanding`（失败重试一次） |
 | `radar/stats.js` | **新增**（182 行）。`computeStats(items,{days,topicId,now,topLimit,sourceLabels})` / `weekStart()` / `DEFAULT_STATS_DAYS=90` / `MAX_STATS_DAYS=730` / `TOP_LIMIT=8` |
 | `radar/library.js` | **新增**（156 行）。`yearOf()` / `freshnessOf(item,now)`（90 天新 / 365 天内近期 / 超过一年老 / 无日期 unknown，未来日期算新）/ `buildLibrary(items,{groupBy,topicId,now,topicLabel})`；架内排序 `publishedAt` → `citations` → `discoveredAt`；行只带精简字段（`hasSummary` / `summaryDepth` / `ageDays` / `freshness`），不带宽摘要 |
 | `radar/mail.js` | `MAIL_COLORS` / `FONT_STACK` / `escapeHtml` / `safeUrl` / `chipHtml` / `fieldRowHtml` / `paperCardHtml` / `digestToHtml(items,topics,{panelUrl,locale})`；`textToHtml` 保留作兜底 |
@@ -800,10 +800,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 | `package.json` | `files` 加 `radar/config.js`、`radar/dedupe.js`、`radar/stats.js`、`radar/library.js`；`scripts.test = "node --test test/*.test.js"` |
 | `radar-config.example.json` | `settings.scan` 补 `summaryDepth: "standard"`（换机器重建时容易漏） |
 
-### 11.4 测试（239 个用例，全部通过）
+### 11.4 测试（241 个用例，全部通过）
 
 ```
-node --test test/*.test.js   →   pass 239 / fail 0
+node --test test/*.test.js   →   pass 241 / fail 0
 ```
 
 （在 DSH 沙箱里要加 `--experimental-test-isolation=none`，否则测试运行器起子进程会 `spawn EPERM`。）
@@ -817,7 +817,7 @@ node --test test/*.test.js   →   pass 239 / fail 0
 | `test/finalize.test.js` | 21 | strict 丢弃磁共振、作者/期刊救回、排除词、`matchMode=all`、同分按日期；`spreadByYear` 每年代表 / 年内排序 / 条数够用 / 脏数据、`finalize(spread=true)`、`shouldSpread` 90 天边界；**连字符变体折叠 4 例**（标题四种写法、摘要变体、不放过 `MR Imaging`、排除词折叠） |
 | `test/language.test.js` | 14 | `languages` 归一化、zh+en 折成 `[]`、`detectLanguage` 四种输入、`finalize` 的语言过滤与 strict 叠加、store 落盘 |
 | `test/quality.test.js` | 16 | `normalizeIssn` 各种写法；`journalScore` 对数曲线（IF 1→29 / 3→58 / 5→75 / 8.512→94 / ≥10 封顶）与 h 指数兜底；`citationScore` 年化；`paperQuality` 四档与理由、脏输入；**`quartileOf` Q1–Q4 与 `null` 不判 Q4**；**`citationPercentileScore` 缺信号返回 `null` 而非 0**；百分位优先（同一篇论文前 10% > 前 60%）；缺信号先验不让「没证据」压过「有证据」；**两个信号都没有时 unknown + 0 分**；`fetchJournalMetrics` 批量去重与上游失败；期刊缓存命中/过期/查不了也记一笔；**`resolveIssnsByDoi` 批量反查 ISSN 与上游失败** |
-| `test/fulltext.test.js` | 15 | `arxivIdOf` 各种写法；`htmlToText` 段落/脚本/实体；`extractPmcBody` 只取 body 跳过 ref-list；最小 PDF 抽取与非 PDF 安全；`looksLikeProse` 区分 CID 乱码；`condenseText` 保头保尾；`stripLeadingBoilerplate`；`fetchFullText` 四条路线与限定 routes；publisher-pdf 的 `citation_pdf_url` 与 `/pdf` 后缀；订阅制域名快速失败；总预算跨路线共享 |
+| `test/fulltext.test.js` | 17 | `arxivIdOf` 各种写法；`htmlToText` 段落/脚本/实体；`extractPmcBody` 只取 body 跳过 ref-list；最小 PDF 抽取与非 PDF 安全；`looksLikeProse` 区分 CID 乱码；`condenseText` 保头保尾；`stripLeadingBoilerplate`；`fetchFullText` 四条路线与限定 routes；publisher-pdf 的 `citation_pdf_url` 与 `/pdf` 后缀；订阅制域名快速失败；总预算跨路线共享；**不是 PDF 就换 UA 重试**；**反爬验证页快速放弃** |
 | `test/scan.test.js` | 30 | `mapLimit` 顺序/并发峰值/夹取/抛错；`resolvePanelUrl` 三种降级；`effectiveLookbackDays` 6 例（**含 30 天下限**）+ `runScan` 窗口透传/按方向收窄 4 例；`summaryDepth` 默认/三档/非法值/`options` 覆盖 5 例；`fullText` 开关；**`backfillQuality` 6 例**（补缺分的老论文、幂等、用期刊缓存、空库、补 ISSN 后重算、补不到 ISSN 不抹分）；**`ensureIssns` 3 例**（DOI 反查、全部有序号时不发请求、上游抛错安全） |
 | `test/select-fresh.test.js` | 8 | 跨源只留高分那条、跨方向、seen 的 DOI/标题键命中、脏候选 |
 | `test/paginate.test.js` | 10 | 分页、筛选、非法参数夹取（**含 `null` → 默认 50**）、`/item`、`/mark-all-read`、收藏落盘 |
@@ -1393,7 +1393,7 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 必须预热：`runScan` 里先 `await journalCache.ensure(fresh.map(i => i.issn), settings.api)` 再
 `asMap()`，因为索引里只有老论文，靠它预热不到本次新抓到的期刊。
 
-#### 11.15.2 全文精读（`radar/fulltext.js`，538 行）
+#### 11.15.2 全文精读（`radar/fulltext.js`，598 行）
 
 **四条路线**，按「拿到全文的概率 × 速度」排序：
 
@@ -1468,12 +1468,12 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 | 文件 | 用例数 | 新增内容 |
 | --- | --- | --- |
 | `test/quality.test.js` | 16 | normalizeIssn / 对数曲线边界 / 年化被引 / 四档判定 / 脏输入 / 批量查 ISSN / 上游失败 / 期刊缓存命中与过期 / **Q1–Q4 分区与 `null` 不判 Q4** / **缺信号返回 `null` 而非 0** / **百分位优先跨学科可比** / **缺信号先验不许「没证据」压过「有证据」** / **两信号都没有时 unknown + 0 分** / **DOI 批量反查 ISSN（去重 + OR 只写一次字段前缀）** / **反查失败返回空对象** |
-| `test/fulltext.test.js` | 15 | arXiv 编号识别 / HTML 转文本 / PMC body 抽取 / PDF 抽取 / 非 PDF 安全 / 可读性判定 / 截断 / 四条路线回退 / 限定路线 / `citation_pdf_url` / 域名拼 `/pdf` / 订阅制快速失败 / 预算共享 |
+| `test/fulltext.test.js` | 17 | arXiv 编号识别 / HTML 转文本 / PMC body 抽取 / PDF 抽取 / 非 PDF 安全 / 可读性判定 / 截断 / 四条路线回退 / 限定路线 / `citation_pdf_url` / 域名拼 `/pdf` / 订阅制快速失败 / 预算共享 / 换 UA 重试 / 验证页快速放弃 |
 | `test/scan.test.js` | 30 | 新增「按设置决定是否抓全文」（关掉时只发 1 个 RSS 请求，不碰 doi.org）、`backfillQuality` 4 例、`ensureIssns` 3 例、**「有分数但缺 ISSN」也会重算**、**补不到 ISSN 不抹掉已有分数** |
 | `test/store.test.js` | 9 | 默认值加 `fullText: true` |
 | `test/client-smoke.test.js` | 17 | 新增质量徽章「高质量 · 79」/ 影响因子 / **分区徽章 `Q1` 与 `drr-quartile-q1`** / 点开「依据」/ 顶部状态条断言；**没百分位的条目不出现 `Q4`** |
 
-合计 **239 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
+合计 **241 个用例，全绿**（`node --test --experimental-test-isolation=none test/*.test.js`，约 7.5 秒）。
 
 #### 11.15.6 老论文补 ISSN 与重算（实测）
 
@@ -1502,6 +1502,51 @@ export function buildLibrary(items, options = {})      // → { groupBy, topicId
 `withImpactFactor: 0 → 33`、期刊缓存 26 条，档位从 `{medium:22, unknown:11}` 变成
 **`{high:18, medium:13, low:2, unknown:0}`**。最高分 80（MSSP，IF 10.10）、78（Thin-Walled
 Structures，IF 8.51）、79（Polymers，IF 7.91）。
+
+#### 11.15.7 全文抓取的两个假失败（实测上限 53% of OA）
+
+**背景**：用户库里 33 篇论文只有 9 篇能抓到全文（27%），17 篇标了开放获取的里也只抓到 9 篇。
+逐条追下去发现**两个失败都不是「网站不给」**，而是我们自己的判断错了。
+
+**假失败 1：UA 版本号被出版社区别对待**
+
+同一个 URL、同一份 headers，只差 UA 里的 Chrome 版本号，结果完全不同：
+
+| UA | 结果 |
+| --- | --- |
+| `Chrome/120.0.0.0` | 200 + `text/html` + **14367 字节拦截页** |
+| `Chrome/131.0.0.0` | 200 + `application/pdf` + **3631757 字节真 PDF** |
+
+修法：`BROWSER_UA` 升到 `Chrome/131.0.0.0`，并新增 `ALT_UA`（Safari 17.4）作为备用；
+`downloadPdf()` 第一个 UA 拿不到 PDF 就换第二个再试一次。
+
+**假失败 2：200 + HTML 拦截页被当成下载成功**
+
+`fetchBinary` 原来只判 `res.ok`。出版社反爬返回的拦截页**状态码是 200**，
+于是被当成了「PDF 下载成功」，再到 `pdfToText()` 输出空串才失败 —— 白白浪费一次完整下载。
+修法：新增 `looksLikePdf(buffer)` 验 `%PDF` 魔数，不是 PDF 就换 UA 重试。
+
+**假失败 3（放弃得对）：IOP 的 Radware 验证页**
+
+`10.1088/1742-6596/2956/1/012046` 的 DOI 会 302 到
+`https://validate.perfdrive.com/…`（Radware Bot Manager Captcha），也是一个 **200 + 14367 字节**的页面。
+这种页面再试几次都是同一个验证页，只会烧掉整个 25 秒预算。
+修法：新增 `CHALLENGE_PATTERNS`（`Radware Bot Manager Captcha` / `validate.perfdrive.com` /
+`cf-browser-verification` / `<title>Access Denied` 等）与 `looksLikeChallenge(finalUrl, html)`，
+命中就直接放弃这条路线。**只在 HTML < 40000 字节时才用内容判断**，避免正常论文落地页误伤。
+
+**实测效果**：成功率不变（9/33），但总耗时从 **230 秒降到 157 秒**，平均 4770ms/篇 ——
+省下来的全是「本来就没戏」的等待。
+
+**上限在哪里（重要结论）**：24 篇失败的里 **15 篇是 Elsevier 的 `10.1016/*`**（63%）。
+试过 `www.sciencedirect.com/science/article/pii/<pii>/pdfft?download=true`，
+返回 **403 + 832803 字节拦截页**。ScienceDirect 对非浏览器请求一律 403，这是硬墙。
+所以全文获取率的天花板就是「开放获取比例」，插件已经接近这个上限，不要再往这条路上投人。
+
+**踩坑**：`downloadPdf` 用字符串 `replace` 大段重写时把同一个函数体复制了好几遍，
+`node --check` 直接报 `Identifier 'downloadPdf' has already been declared` ——
+而且当时的修复脚本写文件被沙箱拒（`EPERM: open 'radar/fulltext.js'`），只能改用 `edit` 工具逐块删。
+教训：**大段替换别用脚本拼字符串，用 `edit` 按块改**。
 
 #### 11.15.5 本次踩的坑
 

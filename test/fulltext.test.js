@@ -208,9 +208,10 @@ test('fetchFullText 支持限定路线', async (t) => {
     { routes: ['oa-pdf'] },
   )
   assert.equal(out, null)
-  // 只打了 PDF 那个地址，没去碰 arXiv
-  assert.equal(requested.length, 1)
-  assert.match(requested[0], /example\.org\/x\.pdf/)
+  // 只打了 PDF 那个地址，没去碰 arXiv。
+  // 两次是因为「不是 PDF 就换个 UA 再试一次」—— 404 不算拿到 PDF，所以会重试。
+  assert.ok(requested.every((u) => /example\.org\/x\.pdf/.test(u)), `实际请求: ${requested.join(', ')}`)
+  assert.ok(requested.length >= 1)
 })
 
 test('publisher-pdf 从 DOI 落地页的 citation_pdf_url 拿全文', async (t) => {
@@ -322,4 +323,80 @@ test('fetchFullText 的总预算跨路线共享，用完就不再开新路线', 
   // 80ms 预算用光后不应继续开 europepmc / oa-pdf / publisher-pdf
   assert.ok(requested.length <= 2, `实际发了 ${requested.length} 个请求`)
   assert.ok(Date.now() - started < 3000)
+})
+
+test('下载回来的不是 PDF 时换一个 UA 再试（拦截页是 200 + HTML）', async (t) => {
+  const original = globalThis.fetch
+  const seen = []
+  const pdf = minimalPdf(prose(30))
+  globalThis.fetch = async (url, init = {}) => {
+    const ua = String(init.headers?.['user-agent'] ?? '')
+    seen.push(ua)
+    // 第一次给 HTML 拦截页（200，不是 4xx），第二次给真 PDF
+    if (seen.length === 1) {
+      return {
+        ok: true,
+        status: 200,
+        url: String(url),
+        headers: { get: () => 'text/html' },
+        text: async () => '',
+        arrayBuffer: async () => new TextEncoder().encode('<html><title>Captcha</title></html>').buffer,
+      }
+    }
+    return {
+      ok: true,
+      status: 200,
+      url: String(url),
+      headers: { get: () => 'application/pdf' },
+      text: async () => '',
+      arrayBuffer: async () => pdf,
+    }
+  }
+  t.after(() => {
+    globalThis.fetch = original
+  })
+
+  const out = await fetchFullText({ doi: '10.1234/x', oaPdfUrl: 'https://example.org/paper.pdf' }, { routes: ['oa-pdf'] })
+  assert.ok(out !== null, '第二个 UA 应该拿到 PDF')
+  assert.equal(out.source, 'oa-pdf')
+  // 两个 UA 必须是不同的字符串 —— 否则「换 UA」等于没换
+  assert.equal(seen.length, 2)
+  assert.notEqual(seen[0], seen[1])
+})
+
+test('撞上反爬验证页就直接放弃，不再下载 PDF', async (t) => {
+  const original = globalThis.fetch
+  const requested = []
+  globalThis.fetch = async (url) => {
+    const text = String(url)
+    requested.push(text)
+    // doi.org → 落到一个 Radware 验证页（200 + 14KB HTML）
+    if (text.includes('doi.org')) {
+      return {
+        ok: true,
+        status: 200,
+        url: 'https://validate.perfdrive.com/abc/?ssc=iopscience',
+        headers: { get: () => 'text/html' },
+        text: async () => '<html><head><title>Radware Bot Manager Captcha</title></head></html>',
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }
+    }
+    return {
+      ok: true,
+      status: 200,
+      url: text,
+      headers: { get: () => 'application/pdf' },
+      text: async () => '',
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }
+  }
+  t.after(() => {
+    globalThis.fetch = original
+  })
+
+  const out = await fetchFullText({ doi: '10.1088/1742-6596/2956/1/012046' }, { routes: ['publisher-pdf'] })
+  assert.equal(out, null)
+  // 只发了那一次 DOI 解析，没有后续的 PDF 下载请求
+  assert.equal(requested.length, 1, `实际发了 ${requested.length} 个请求`)
+  assert.ok(requested[0].includes('doi.org'))
 })
