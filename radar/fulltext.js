@@ -277,7 +277,18 @@ export function condenseText(text, maxChars) {
  * 所以抓落地页和 PDF 时用一个普通浏览器 UA。这是读公开 OA 全文的必要条件，
  * 不涉及任何绕过登录或付费墙的行为。
  */
-const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+/**
+ * 浏览器 UA。**版本号要跟着更新**：实测 IOP（`iopscience.iop.org`）对
+ * `Chrome/120.0.0.0` 返回 14KB 的拦截页，对 `Chrome/131` 才给 3.6MB 的 PDF ——
+ * 同一个 URL、同一份 headers，只差版本号。老 UA 会被当成爬虫。
+ */
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+/**
+ * 备用 UA。有些站点按 UA 放行，第一个被拦就换一个再试 —— 比单一的「最新 UA
+ * 一定行」更耐时间，也不用每次发布都追版本号。
+ */
+const ALT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'
 
 /**
  * 全文抓取专用的取文本函数。
@@ -326,6 +337,29 @@ async function fetchBinary(url, { timeoutMs = FULLTEXT_TIMEOUT_MS, maxBytes = MA
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** 看着像不像一个 PDF（`%PDF` 魔数）。拦截页常以 200 + HTML 返回。 */
+function looksLikePdf(buffer) {
+  return Buffer.isBuffer(buffer) && buffer.length > 4 && buffer.subarray(0, 5).toString('latin1').startsWith('%PDF')
+}
+
+/**
+ * 下载 PDF，并**确认下到的真的是 PDF**。
+ *
+ * 两个坑都在这一段里解决：
+ * 1. 订阅制 / 反爬的出版社对「像爬虫」的 UA 会返回 **200 + HTML 拦截页**，
+ *    状态码是成功的，所以不能只看 `res.ok`，必须验 `%PDF` 魔数。
+ * 2. 有的站点按 UA 版本号区别对待（实测 IOP 对 `Chrome/120.0.0.0` 返回
+ *    14KB 拦截页、对 `Chrome/131` 返回 3.6MB 正常 PDF）。所以第一个 UA
+ *    拿不到 PDF 时换一个再试一次，比死守一个 UA 稳。
+ */
+async function downloadPdf(url, options = {}) {
+  for (const userAgent of [options.userAgent ?? BROWSER_UA, ALT_UA]) {
+    const buffer = await fetchBinary(url, { ...options, accept: 'application/pdf,*/*', userAgent })
+    if (looksLikePdf(buffer)) return buffer
+  }
+  return null
 }
 
 /** 走 arXiv 的 HTML 全文。 */
@@ -377,7 +411,7 @@ async function viaEuropePmc(item, options) {
 async function viaOaPdf(item, options) {
   const pdfUrl = String(item?.oaPdfUrl ?? '').trim()
   if (!/^https?:\/\//i.test(pdfUrl)) return null
-  const buffer = await fetchBinary(pdfUrl, options)
+  const buffer = await downloadPdf(pdfUrl, options)
   if (buffer === null) return null
   const text = pdfToText(buffer)
   if (!looksLikeProse(text)) return null
@@ -418,6 +452,30 @@ const CLOSED_HOSTS = [
   'ascelibrary.org',
   'asmedigitalcollection.asme.org',
 ]
+
+/**
+ * 反爬 / 人机验证页的特征。命中就说明「这条路线走不通」，不是「这次失败」——
+ * 再试几次也是同一个验证页，只会白烧掉整个预算。
+ *
+ * 实测 IOP（`iopscience.iop.org`）会 302 到
+ * `validate.perfdrive.com/…` 的 Radware Bot Manager Captcha 页，
+ * 状态码是 **200**、HTML 有 14KB，看不出任何错误。
+ */
+const CHALLENGE_PATTERNS = [
+  /Radware Bot Manager Captcha/i,
+  /validate\.perfdrive\.com/i,
+  /cf-browser-verification|cf_chl_opt|Just a moment\.\.\./i,
+  /<title>\s*Access Denied/i,
+  /captcha/i,
+]
+
+/** 页面看起来是不是反爬 / 验证码页。 */
+function looksLikeChallenge(finalUrl, html) {
+  if (CHALLENGE_PATTERNS.some((pattern) => pattern.test(finalUrl))) return true
+  // 只在 HTML 不长时用内容判断：正常论文落地页有大量正文，不会命中这些词
+  if (html.length < 40000 && CHALLENGE_PATTERNS.some((pattern) => pattern.test(html))) return true
+  return false
+}
 
 /** 把 DOI 解析成出版社落地页地址（跟随跳转后的最终 URL）。失败重试一次。 */
 async function resolveDoiLanding(doi, options) {
@@ -477,6 +535,8 @@ async function viaPublisherPdf(item, options) {
   }
   // 纯订阅制出版社：落地页没有 PDF，别再浪费一次下载
   if (CLOSED_HOSTS.includes(host)) return null
+  // 撞上反爬验证页：这条路线对这篇论文就是走不通，别再浪费一次下载
+  if (looksLikeChallenge(finalUrl, html)) return null
 
   // 1) 落地页里的 citation_pdf_url（HighWire / OJS / 大部分期刊平台都有）
   let pdfUrl = ''
@@ -496,7 +556,7 @@ async function viaPublisherPdf(item, options) {
   }
   if (!/^https?:\/\//i.test(pdfUrl)) return null
 
-  const buffer = await fetchBinary(pdfUrl, { ...options, accept: 'application/pdf,*/*', userAgent: BROWSER_UA })
+  const buffer = await downloadPdf(pdfUrl, { ...options, userAgent: BROWSER_UA })
   if (buffer === null) return null
   const text = pdfToText(buffer)
   if (!looksLikeProse(text)) return null

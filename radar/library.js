@@ -9,6 +9,8 @@
  * 书架按年份分层就能一眼看出「这一年收了多少、哪些是补回来的老货」。
  */
 
+import { finiteNumber } from './quality.js'
+
 /** 一年按 365 天算，用于「老论文」判定。 */
 const YEAR_DAYS = 365
 /** 90 天内算「新」，超过一年算「老」。 */
@@ -60,10 +62,12 @@ function compactItem(item, now) {
     citations: item.citations,
     read: item.read === true,
     starred: item.starred === true,
-    // 质量分与档位（书架上打徽章、按质量排都用它）
-    qualityScore: Number.isFinite(Number(item.quality?.score)) ? Number(item.quality.score) : null,
+    // 质量分与档位（书架上打徽章、按质量排都用它）。
+    // 用 finiteNumber 而不是 `Number.isFinite(Number(x))`：后者会把 null 变成 0，
+    // 书架上每本没识别到期刊的书都会显示「IF 0.0」。
+    qualityScore: finiteNumber(item.quality?.score),
     qualityTier: typeof item.quality?.tier === 'string' ? item.quality.tier : '',
-    impactFactor: Number.isFinite(Number(item.quality?.impactFactor)) ? Number(item.quality.impactFactor) : null,
+    impactFactor: finiteNumber(item.quality?.impactFactor),
     // 有没有生成过结构化摘要（有摘要的卡片才能「精读」，书架上标一下）
     hasSummary: item.summary !== null && typeof item.summary === 'object',
     summaryDepth: item.summary?.depth ?? '',
