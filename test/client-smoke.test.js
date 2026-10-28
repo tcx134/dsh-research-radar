@@ -342,9 +342,11 @@ function installFetch(handler) {
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url: String(url), method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : undefined })
     const payload = await handler(String(url), init)
+    // status 可以显式给（405 要单独测「后端还是旧版本」这条分支）
+    const status = payload.status ?? (payload.ok === false ? 400 : 200)
     return {
       ok: payload.ok !== false,
-      status: payload.ok === false ? 400 : 200,
+      status,
       json: async () => payload.body,
     }
   }
@@ -743,6 +745,28 @@ test('关系网没有空档时，用两种不同的话说明原因', async () =>
   assert.match(thin, /够热的主题太少/)
   assert.match(thin, /至少要出现在这么多篇论文里 3 篇/, '要把门槛说清楚，别只说「不够」')
   assert.doesNotMatch(thin, /连线已经比较密/)
+})
+
+test('关系网后端还是旧版本（405）时，提示重启而不是「加载失败」', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/graph')) return { ok: false, status: 405, body: { error: 'method not allowed' } }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '关系网').props.onClick()
+    tree = await mount(mini, Panel)
+    const text = textOf(tree)
+    // 说「重启一下」而不是「加载失败: method not allowed」
+    assert.match(text, /后端还没生效/)
+    assert.match(text, /重启一次桌面应用/)
+    assert.doesNotMatch(text, /method not allowed/)
+    assert.doesNotMatch(text, /关系网加载失败/)
+  } finally {
+    fetchStub.restore()
+  }
 })
 
 test('趋势页会拉 /stats 并渲染周柱状图与榜单', async () => {
