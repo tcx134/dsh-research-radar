@@ -527,6 +527,177 @@ test('没有启用方向时 scan 直接返回错误而不是抛异常', async (t
   ctx.disposeAll()
 })
 
+test('POST /retry-summaries 定点重试一篇失败的摘要', async (t) => {
+  const dir = await tempDir(t)
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [{ id: 't1', name: '金属橡胶', keywords: ['metal rubber'], sources: ['openalex'] }],
+      items: [
+        { id: 'a', title: 'A', topicId: 't1', summary: null, summaryError: '坏了 a', summaryErrorCode: 'unparsable', discoveredAt: '2026-10-01T00:00:00.000Z' },
+        { id: 'b', title: 'B', topicId: 't1', summary: null, summaryError: '坏了 b', summaryErrorCode: 'unparsable', discoveredAt: '2026-10-02T00:00:00.000Z' },
+      ],
+      seen: {},
+      settings: { scan: { fullText: false } },
+    }),
+    'utf8',
+  )
+  const ctx = makeCtx()
+  let calls = 0
+  ctx.llm = {
+    stream() {
+      calls += 1
+      return (async function* () {
+        yield { type: 'text-delta', text: '{"tldr":"救回","tags":[]}' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  }
+  apply(ctx, { dataDir: dir })
+
+  const res = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/retry-summaries',
+    headers: { 'content-type': 'application/json' },
+    body: { id: 'b', limit: 1 },
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.repaired, 1)
+  assert.equal(calls, 1, '只该调用一次模型，不能顺手把 a 也跑了')
+  // 响应回带这一篇的最新状态，面板才能就地替换（第一页可能根本不含它）
+  assert.equal(res.body.item.id, 'b')
+  assert.equal(res.body.item.summary.tldr, '救回')
+  assert.equal(res.body.item.summaryError, '')
+  const untouched = res.body.state.items.find((entry) => entry.id === 'a')
+  assert.equal(untouched.summary, null)
+  ctx.disposeAll()
+})
+
+test('POST /retry-summaries 在摘要关闭时直接报错，不白跑模型', async (t) => {
+  const dir = await tempDir(t)
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+  await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/settings',
+    headers: { 'content-type': 'application/json' },
+    body: { settings: { scan: { summarize: false } } },
+  })
+  const res = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/retry-summaries',
+    headers: { 'content-type': 'application/json' },
+    body: { id: 'whatever' },
+  })
+  assert.equal(res.status, 400)
+  assert.match(res.body.error, /摘要生成已关闭/)
+  ctx.disposeAll()
+})
+
+test('POST /backfill-percentiles 在窗口内不发网络请求，并报出带分区的篇数', async (t) => {
+  const dir = await tempDir(t)
+  const recent = new Date().toISOString()
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [{ id: 't1', name: '金属橡胶', keywords: ['metal rubber'], sources: ['openalex'] }],
+      items: [
+        // 刚查过（窗口内）→ 不该再查一次，所以这条不会触发网络请求
+        {
+          id: 'openalex:1',
+          title: 'A',
+          topicId: 't1',
+          doi: '10.1/a',
+          issn: '1234-5678',
+          citationPercentile: 99,
+          citationPercentileAt: recent,
+          quality: { score: 60, tier: 'high', reasons: [], impactFactor: 5, journalHIndex: 10, citationPercentile: 99, quartile: 'Q1' },
+          discoveredAt: '2026-10-01T00:00:00.000Z',
+        },
+        {
+          id: 'openalex:2',
+          title: 'B',
+          topicId: 't1',
+          doi: '10.1/b',
+          citationPercentile: null,
+          citationPercentileAt: recent,
+          quality: { score: 40, tier: 'medium', reasons: [], impactFactor: 2, journalHIndex: 5, citationPercentile: null, quartile: null },
+          discoveredAt: '2026-10-02T00:00:00.000Z',
+        },
+        // 没有 DOI 的永远补不了，但也不能让它把整趟撑红
+        { id: 'arxiv:x', title: 'C', topicId: 't1', citationPercentile: null, discoveredAt: '2026-10-03T00:00:00.000Z' },
+      ],
+      seen: {},
+      settings: { scan: { summarize: false } },
+    }),
+    'utf8',
+  )
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+
+  // 两篇带 DOI 的都刚查过（窗口内）→ 不该再发网络请求；这条测试只验路由本体
+  // （之前它在 `options?.journalCache` 上抛 ReferenceError，一调就 500）。
+  const res = await call(ctx, {
+    method: 'POST',
+    url: '/api/dsh-research-radar/backfill-percentiles',
+    headers: { 'content-type': 'application/json' },
+    body: {},
+  })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.ok, true)
+  // 3 篇里只有 1 篇带分区；窗口内不重查，所以 filled 是 0
+  assert.equal(res.body.total, 3)
+  assert.equal(res.body.filled, 0)
+  assert.equal(res.body.withQuartile, 1)
+  ctx.disposeAll()
+})
+
+test('每个端点都能被真的调起来（不许再出现未声明变量这类 500）', async (t) => {
+  // 这条是给 11.20.5 那个 bug 立的规矩：`/backfill-percentiles` 曾经在
+  // `options?.journalCache` 上抛 ReferenceError，`node --check` 和几百个单测
+  // 都没抓到，因为没有测试真的打过这个端点。
+  // 这里把全部端点各打一遍，只要求「不是 5xx 且不是 X is not defined」：
+  // 业务错误（未知接口 / 未找到该论文 / 请先填写收件人）都是正常结果。
+  const dir = await tempDir(t)
+  const ctx = makeCtx()
+  apply(ctx, { dataDir: dir })
+
+  const gets = ['/state', '/stats', '/graph', '/library']
+  const posts = [
+    ['/topics', { op: 'list' }],
+    ['/settings', {}],
+    ['/preview', { topic: { name: 'X', keywords: ['x'], sources: ['openalex'] } }],
+    ['/preview-mail', { items: [] }],
+    ['/item', { id: 'nope', read: true }],
+    ['/mark-all-read', {}],
+    ['/retry-summaries', { limit: 1 }],
+    ['/backfill-percentiles', {}],
+    ['/test-mail', {}],
+    ['/scan', { lookbackDays: 1 }],
+    ['/clear-items', {}],
+    ['/nonexistent', {}],
+  ]
+
+  const bad = []
+  for (const path of gets) {
+    const res = await call(ctx, { url: `/api/dsh-research-radar${path}` })
+    if (res.status >= 500 || /is not defined/.test(String(res.body?.error ?? ''))) bad.push(`GET ${path} → ${res.status} ${res.body?.error}`)
+  }
+  for (const [path, payload] of posts) {
+    const res = await call(ctx, {
+      method: 'POST',
+      url: `/api/dsh-research-radar${path}`,
+      headers: { 'content-type': 'application/json' },
+      body: payload,
+    })
+    if (res.status >= 500 || /is not defined/.test(String(res.body?.error ?? ''))) bad.push(`POST ${path} → ${res.status} ${res.body?.error}`)
+  }
+  assert.deepEqual(bad, [], `这些端点打不通：\n${bad.join('\n')}`)
+  ctx.disposeAll()
+})
+
 test('Agent 工具的 action 枚举与 output 渲染正常', async (t) => {
   const dir = await tempDir(t)
   const ctx = makeCtx()

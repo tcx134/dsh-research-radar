@@ -1,5 +1,5 @@
 import { createStore } from './radar/store.js'
-import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays } from './radar/scan.js'
+import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays, retryFailedSummaries, backfillPercentiles } from './radar/scan.js'
 import { createJournalCache, QUALITY_TIERS, paperQuality } from './radar/quality.js'
 import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
@@ -578,10 +578,96 @@ export function apply(ctx, config) {
               fullTextCount: result.fullTextCount ?? 0,
               // 这次扫描末尾给多少篇老论文重算了质量分（补 ISSN + 影响因子）
               backfilled: result.backfilled ?? 0,
+              // 这次扫描补到多少篇的被引百分位（= 分区 Q1–Q4 的数据来源）
+              percentilesFilled: result.percentilesFilled ?? 0,
+              // 这次扫描顺手救回几篇历史「摘要失败」的论文
+              retriedSummaries: result.retriedSummaries ?? 0,
               qualityTiers: result.qualityTiers ?? null,
               errors: result.errors,
               mail: result.mail,
               items: result.newItems,
+              state: await publicState(),
+            })
+            return
+          }
+
+          // 手动重试失败的摘要。runScan 末尾会自动跑一次（每轮最多 5 篇），
+          // 但用户在卡片上看到红字时应该有个「就现在重试这几篇」的按钮 ——
+          // 不然只能等下一轮扫描，而下一轮可能是几小时后。
+          // 参数 `depth` 可以覆盖当前解析深度：输出被截断的那批换个更浅的档更容易成功。
+          if (action === 'retry-summaries') {
+            const state = await store.load()
+            if (state.settings.scan.summarize === false) throw new Error('摘要生成已关闭，请先在设置里打开')
+            const depth =
+              typeof body.depth === 'string' && body.depth !== ''
+                ? normalizeSummaryDepth(body.depth)
+                : normalizeSummaryDepth(state.settings.scan.summaryDepth)
+            const limit = Math.min(20, Math.max(1, Number(body.limit ?? 5) || 5))
+            const itemId = typeof body.id === 'string' ? body.id : ''
+            const repaired = await retryFailedSummaries(store, {
+              ctx,
+              config: pluginConfig,
+              depth,
+              fullText: state.settings.scan.fullText !== false,
+              limit,
+              itemId,
+            })
+            lastError = ''
+            // 定点重试时把这一篇最新的摘要状态带回去，面板就能就地换成成功或新的错误原文，
+            // 不用重新拉整页（整页第一页可能根本不含这一条）。
+            let item = null
+            if (itemId !== '') {
+              const after = await store.load()
+              const found = after.items.find((entry) => entry.id === itemId)
+              if (found !== undefined) {
+                item = {
+                  id: found.id,
+                  summary: found.summary,
+                  summaryError: found.summaryError,
+                  summaryErrorCode: found.summaryErrorCode ?? '',
+                }
+              }
+            }
+            sendJson(res, 200, { ok: true, repaired, depth, item, state: await publicState() })
+            return
+          }
+
+          // 手动补被引百分位（分区 Q1–Q4 的数据来源）。
+          //
+          // 为什么需要独立入口：`citationPercentile` 是后加的字段，老论文从没查过，
+          // 而 `runScan` 末尾才会顺带补一次 —— 如果用户不手动扫（或者扫描间隔是
+          // 12 小时），面板上的分区徽章要等半天才出现。这张接口让「重启后立刻补」
+          // 成为可能，也方便排查「为什么还是没有分区」。
+          //
+          // 幂等：`citationPercentileAt` 在 30 天窗口内的不会被重查，连点几次都安全。
+          if (action === 'backfill-percentiles') {
+            const state = await store.load()
+            // 期刊指标缓存要先 load 才 asMap()（这里跟 publicState 一样先读一次）：
+            // 有了它才算得出期刊分，缺它就只能按被引重算，会把「顶刊 + 刚从没查过
+            // 百分位」的论文从 high 打成 medium。
+            let journals = null
+            try {
+              await journalCache.load()
+              journals = journalCache.asMap()
+            } catch {
+              journals = null
+            }
+            const filled = await backfillPercentiles(store, {
+              api: state.settings.api,
+              journals,
+              refreshDays: Number.isFinite(Number(body.refreshDays)) ? Number(body.refreshDays) : undefined,
+              // 手动点击时允许强制全查一遍（排查用），默认走 30 天窗口
+              now: body.force === true ? Date.now() : undefined,
+            })
+            const after = await store.load()
+            const withQuartile = after.items.filter(
+              (item) => item?.quality !== null && typeof item?.quality === 'object' && item.quality.quartile !== null,
+            ).length
+            sendJson(res, 200, {
+              ok: true,
+              filled,
+              withQuartile,
+              total: after.items.length,
               state: await publicState(),
             })
             return
@@ -832,6 +918,10 @@ export function apply(ctx, config) {
             fullTextCount: result.fullTextCount ?? 0,
             // 这次扫描末尾给多少篇老论文重算了质量分
             backfilled: result.backfilled ?? 0,
+            // 这次扫描补到多少篇的被引百分位（= 分区 Q1–Q4）
+            percentilesFilled: result.percentilesFilled ?? 0,
+            // 这次扫描顺手救回几篇历史「摘要失败」的论文
+            retriedSummaries: result.retriedSummaries ?? 0,
             errors: result.errors,
             items: result.newItems.map((i) => ({
               title: i.title,

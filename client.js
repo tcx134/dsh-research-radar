@@ -105,6 +105,14 @@ window.__ModuleLoader__.load({
         read_fulltext: '读全文',
         papers_unit: '篇',
         backfilled: '补算老论文',
+        quartiles_filled: '补上分区',
+        quartile_backfill: '补分区',
+        quartile_backfilling: '补分区中…',
+        quartile_backfill_hint: '按 DOI 查回被引百分位，老论文的分区徽章就出来了（30 天内不重复查）',
+        quartile_backfill_done: '补分区完成',
+        quartile_filled: '新补到',
+        quartile_none_new: '没有需要补的（都已查过或上游暂无数据）',
+        retried_summaries: '补上摘要',
         last_mail: '上次发送邮件',
         never: '从未',
         tldr: '一句话',
@@ -117,7 +125,21 @@ window.__ModuleLoader__.load({
         tags: '标签',
         authors_label: '作者',
         summary_failed: '摘要生成失败',
+  retry_summary: '重新总结',
+  retrying: '正在重试…',
+  retry_ok: '已重新生成摘要',
+  retry_still_failed: '这次还是没成功，可以换模型，或把解析深度调高一档再试',
+  retry_need_restart: '后台插件还是旧版本，重启一次桌面应用（或停用再启用这个插件）之后再试',
         abstract_only: '原始摘要（未生成结构化摘要）',
+        salvaged: '降级提取',
+        salvaged_title: '模型没有按 JSON 输出，这里是从它写的正文里按小标题尽量拆出来的字段，可能不完整',
+        truncated_badge: '输出被截断',
+        truncated_title: '模型的输出达到了长度上限，后面的字段可能缺失。可以把解析深度调高一档，或换一个输出更长的模型',
+        retry_hint_unparsable: '换个模型，或调整解析深度后再试（推理模型建议提高深度）',
+        retry_hint_truncated: '把解析深度调高一档（输出上限更大），或换一个输出上限更高的模型',
+        tldr_derived: '一句话结论取自「主要内容」的第一句',
+        retry_hint_transient: '上游临时故障，下次扫描会自动重试',
+        retry_hint_failed: '检查插件设置里的 provider / 模型名',
         clear_items: '清空已抓取',
         load_failed: '加载失败',
         summary_off: '未启用 LLM 摘要',
@@ -328,6 +350,14 @@ window.__ModuleLoader__.load({
         read_fulltext: 'Read full text:',
         papers_unit: 'papers',
         backfilled: 'Rescored older entries:',
+        quartiles_filled: 'Quartiles filled:',
+        quartile_backfill: 'Backfill quartiles',
+        quartile_backfilling: 'Backfilling…',
+        quartile_backfill_hint: 'Look up citation percentiles by DOI so older papers get their quartile badge (skipped within 30 days)',
+        quartile_backfill_done: 'Quartile backfill finished',
+        quartile_filled: 'newly filled',
+        quartile_none_new: 'nothing to fill (already checked, or not available upstream)',
+        retried_summaries: 'Recovered summaries',
         last_mail: 'Last email',
         never: 'never',
         tldr: 'TL;DR',
@@ -340,7 +370,21 @@ window.__ModuleLoader__.load({
         tags: 'Tags',
         authors_label: 'Authors',
         summary_failed: 'Summary failed',
+        retry_summary: 'Try again',
+        retrying: 'Retrying…',
+        retry_ok: 'Summary regenerated',
+        retry_still_failed: 'Still failing — try another model, or raise the parse depth by one level',
+        retry_need_restart: 'The plugin backend is still the old build — restart the desktop app once (or disable and re-enable this plugin) and try again',
         abstract_only: 'Raw abstract (no structured summary)',
+        salvaged: 'Partial extract',
+        salvaged_title: 'The model did not return JSON; these fields were recovered from its prose and may be incomplete',
+        truncated_badge: 'Truncated',
+        truncated_title: 'Output hit the length limit, so later fields may be missing. Raise the parse depth by one level, or use a model with a larger output limit',
+        retry_hint_unparsable: 'Try another model, or change the parse depth (reasoning models usually need a higher one)',
+        retry_hint_truncated: 'Raise the parse depth by one level (bigger output budget), or use a model with a larger output limit',
+        tldr_derived: 'The one-line conclusion was taken from the first sentence of “key findings”',
+        retry_hint_transient: 'Upstream hiccup — the next scan retries automatically',
+        retry_hint_failed: 'Check the provider / model name in plugin settings',
         clear_items: 'Clear papers',
         load_failed: 'Failed to load',
         summary_off: 'LLM summary disabled',
@@ -494,6 +538,7 @@ window.__ModuleLoader__.load({
 .drr-authors{color:var(--dsw-alias-label-secondary,#9a9a9a);font-size:11.5px;margin-bottom:10px;line-height:1.55}
 .drr-tldr{background:var(--dsw-alias-markdown-placeholder,#f5f6f7);border-left:2px solid var(--dsw-alias-link,#4176e6);border-radius:0 6px 6px 0;padding:9px 12px;font-size:12.5px;line-height:1.65;margin-bottom:10px}
 .drr-tldr b{color:var(--dsw-alias-link,#4176e6);font-weight:600;margin-right:6px}
+.drr-tldr-src{display:block;margin-top:4px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-secondary,#9a9a9a)}
 .drr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:2px 22px;margin-bottom:8px}
 .drr-field{margin:4px 0;line-height:1.65;font-size:12.5px}
 .drr-field b{display:block;color:var(--dsw-alias-label-tertiary,#81858c);font-weight:600;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;margin-bottom:2px}
@@ -503,6 +548,10 @@ window.__ModuleLoader__.load({
 .drr-chip-topic{background:var(--dsw-specific-bubble,#edf3fe);color:var(--dsw-alias-link,#4176e6);font-weight:600}
 .drr-chip-match{background:var(--dsw-alias-state-success-tertiary,#e6faed);color:var(--dsw-alias-label-primary,#0f1115);max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .drr-chip-oa{background:var(--dsw-alias-state-success-tertiary,#e6faed);color:var(--dsw-alias-label-primary,#0f1115);font-weight:600}
+.drr-chip-salvaged{background:var(--dsw-alias-state-warn-tertiary,#fff4e6);color:var(--dsw-alias-state-warn-primary,#a8620a);font-weight:600}
+.drr-chip-trunc{background:var(--dsw-alias-state-warn-tertiary,#fff4e6);color:var(--dsw-alias-state-warn-primary,#a8620a)}
+.drr-field-err{color:var(--dsw-alias-state-error-primary,#d93025);word-break:break-word}
+.drr-err-hint{color:var(--dsw-alias-label-secondary,#9a9a9a);margin-top:3px}
 .drr-card-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px dashed var(--dsw-alias-border-l3,rgba(128,128,128,.28));color:var(--dsw-alias-label-secondary,#9a9a9a);font-size:11px}
 .drr-card-foot a{color:var(--dsw-alias-link,#4176e6);text-decoration:none}
 .drr-card-foot a:hover{text-decoration:underline}
@@ -575,6 +624,9 @@ window.__ModuleLoader__.load({
 .drr-venue{font-size:11.5px;color:var(--dsw-alias-label-secondary,#9a9a9a);font-style:italic}
 .drr-expand{appearance:none;border:none;background:transparent;color:var(--dsw-alias-link,#4176e6);font-size:11.5px;font-family:inherit;cursor:pointer;padding:2px 0;margin-bottom:6px}
 .drr-expand:hover{text-decoration:underline}
+/* 降级/截断结果的重做条：一句「哪里不可信」+ 一个按钮，横排不占高度 */
+.drr-redo{display:flex;align-items:flex-start;gap:8px;margin-top:8px;padding-top:7px;border-top:1px dashed var(--dsw-alias-border-secondary,#e8e8e8)}
+.drr-redo .drr-hint{margin:0;flex:1}
 .drr-more{display:flex;justify-content:center;padding:8px 0 4px}
 .drr-presets{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
 .drr-presets-label{font-size:11px;color:var(--dsw-alias-label-secondary,#9a9a9a);flex:0 0 auto;min-width:56px}
@@ -760,7 +812,7 @@ window.__ModuleLoader__.load({
       return { label: t('quality_unknown'), cls: 'drr-q-unknown' }
     }
 
-    function ItemCard({ item, t, onToggleRead, onToggleStar, onDeepRead }) {
+    function ItemCard({ item, t, onToggleRead, onToggleStar, onDeepRead, onRetrySummary, retrying }) {
       const s = item.summary !== null && typeof item.summary === 'object' ? item.summary : null
       const hasStructured =
         s !== null &&
@@ -794,6 +846,33 @@ window.__ModuleLoader__.load({
       // 质量分是怎么来的 —— 用户看到「高质量 79」时第一个问题就是凭什么
       const [whyOpen, setWhyOpen] = React.useState(false)
       const reasons = quality !== null && Array.isArray(quality.reasons) ? quality.reasons.filter((r) => typeof r === 'string' && r !== '') : []
+      // 降级提取 / 被截断：结果能用但不可尽信，用徽章标出来而不是藏着
+      const salvaged = s !== null && s.salvaged === true
+      const truncated = s !== null && s.truncated === true
+      // 失败原因 → 一句可操作的建议。用户看到「摘要生成失败」时最想知道
+      // 的是「我该做什么」，而不是再读一遍错误原文。
+      const hintKey =
+        item.summaryErrorCode === 'unparsable'
+          ? 'retry_hint_unparsable'
+          : item.summaryErrorCode === 'truncated'
+            ? 'retry_hint_truncated'
+            : item.summaryErrorCode === 'llm-transient'
+              ? 'retry_hint_transient'
+              : item.summaryErrorCode === 'llm-failed' || item.summaryErrorCode === 'no-route'
+                ? 'retry_hint_failed'
+                : ''
+      // 哪些失败值得马上再试一次：解析失败 / 输出被截断 / 上游抖动，以及没有错误码的老数据。
+      // 配置类（llm-failed / no-route）重试没有任何意义，服务端也会跳过，所以干脆不给按钮。
+      const retryable =
+        item.summaryErrorCode === 'unparsable' ||
+        item.summaryErrorCode === 'truncated' ||
+        item.summaryErrorCode === 'llm-transient' ||
+        item.summaryErrorCode === undefined ||
+        item.summaryErrorCode === ''
+      // 降级提取 / 被截断算「成功」（没有 summaryError），所以不会走进下面的失败块，
+      // 面板上原本没有任何重做入口 —— 用户看着「降级提取」徽章却没法再试一次。
+      // 这里单独给一个「重做」按钮，服务端对点名的那一篇也允许重做已降级/已截断的结果。
+      const redoable = salvaged || truncated
 
       // 第一行只放「标题」和两个最该看见的状态（未读点、收藏星）。
       // 标题是用户在列表里唯一真正在找的东西，必须第一个看到。
@@ -843,6 +922,8 @@ window.__ModuleLoader__.load({
           basis === 'fulltext' ? `📄 ${t('read_fulltext')}` : t('read_abstract'),
         ),
         item.openAccess === true ? h('span', { className: 'drr-chip drr-chip-oa' }, t('open_access')) : null,
+        salvaged ? h('span', { className: 'drr-chip drr-chip-salvaged', title: t('salvaged_title') }, t('salvaged')) : null,
+        truncated ? h('span', { className: 'drr-chip drr-chip-trunc', title: t('truncated_title') }, t('truncated_badge')) : null,
         h('span', { className: 'drr-spacer' }),
         item.publishedAt ? h('span', { className: 'drr-chip drr-chip-quiet' }, fmtDate(item.publishedAt)) : null,
       )
@@ -864,7 +945,16 @@ window.__ModuleLoader__.load({
       // 「一句话结论」放在标题下面、永远可见 —— 用户扫一眼就知道这篇讲了什么
       const tldrLine =
         s !== null && typeof s.tldr === 'string' && s.tldr !== '' && s.tldr !== '摘要未提及'
-          ? h('div', { className: 'drr-tldr' }, s.tldr)
+          ? h(
+              'div',
+              { className: 'drr-tldr' },
+              s.tldr,
+              // 模型没写 tldr、我们拿「主要内容」第一句顶替时要说清楚来源，
+              // 否则用户会以为这就是模型的结论（也可能只是某个实验数据）
+              s.tldrDerived === true
+                ? h('span', { className: 'drr-tldr-src', title: t('tldr_derived') }, ` ${t('tldr_derived')}`)
+                : null,
+            )
           : null
 
       const detailGrid = hasStructured
@@ -894,7 +984,26 @@ window.__ModuleLoader__.load({
       const fallback = hasStructured
         ? null
         : item.summaryError
-          ? h('div', { className: 'drr-field' }, h('b', null, t('summary_failed')), item.summaryError)
+          ? h(
+              'div',
+              { className: 'drr-field drr-field-err' },
+              h('b', null, t('summary_failed')),
+              h('span', null, ` ${item.summaryError}`),
+              hintKey !== '' ? h('div', { className: 'drr-hint drr-err-hint' }, t(hintKey)) : null,
+              // 「就现在重试这几篇」——只有值得重试的失败类型才给按钮。
+              // llm-failed / no-route 是配置错，点一百次也一样，只会白烧 token。
+              typeof onRetrySummary === 'function' && retryable
+                ? h(
+                    'button',
+                    {
+                      className: 'drr-btn drr-btn-sm',
+                      disabled: retrying,
+                      onClick: () => onRetrySummary(item),
+                    },
+                    retrying ? `⏳ ${t('retrying')}` : `↻ ${t('retry_summary')}`,
+                  )
+                : null,
+            )
           : h(
               'div',
               null,
@@ -906,6 +1015,19 @@ window.__ModuleLoader__.load({
         'div',
         null,
         tldrLine,
+        // 重做「已经成功」的结果（降级提取 / 被截断）时如果这次又失败了，
+        // 服务端会保留旧摘要（总比丢掉强）并把新错误记在 summaryError 上。
+        // 那种情况下 hasStructured 仍是 true、走不到下面的失败块，用户只会
+        // 看到一张毫无变化的卡片 —— 所以这里单独补一行错误提示。
+        hasStructured && item.summaryError
+          ? h(
+              'div',
+              { className: 'drr-field drr-field-err' },
+              h('b', null, t('summary_failed')),
+              h('span', null, ` ${item.summaryError}`),
+              hintKey !== '' ? h('div', { className: 'drr-hint drr-err-hint' }, t(hintKey)) : null,
+            )
+          : null,
         hasStructured
           ? expanded
             ? detailGrid
@@ -917,6 +1039,27 @@ window.__ModuleLoader__.load({
           : fallback,
         hasStructured && expanded
           ? h('button', { className: 'drr-expand', onClick: () => setExpanded(false) }, `▴ ${t('hide_details')}`)
+          : null,
+        // 降级 / 截断的摘要也允许重做：先告诉用户这份结果哪里不可信，再给按钮
+        hasStructured && redoable && typeof onRetrySummary === 'function'
+          ? h(
+              'div',
+              { className: 'drr-redo' },
+              h(
+                'span',
+                { className: 'drr-hint' },
+                salvaged ? t('salvaged_title') : t('truncated_title'),
+              ),
+              h(
+                'button',
+                {
+                  className: 'drr-btn drr-btn-sm',
+                  disabled: retrying,
+                  onClick: () => onRetrySummary(item),
+                },
+                retrying ? `⏳ ${t('retrying')}` : `↻ ${t('retry_summary')}`,
+              ),
+            )
           : null,
       )
 
@@ -1666,21 +1809,62 @@ window.__ModuleLoader__.load({
       /** 已读 / 收藏的本地回写：只改这一条，不重新拉整页（避免滚动位置丢失）。 */
       const patchItem = (item, patch) => {
         setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)))
-        setCounts((prev) => {
-          const out = { ...prev }
-          if (typeof patch.read === 'boolean' && (item.read === true) !== patch.read) {
-            out.unread = Math.max(0, (out.unread || 0) + (patch.read ? -1 : 1))
-          }
-          if (typeof patch.starred === 'boolean' && (item.starred === true) !== patch.starred) {
-            out.starred = Math.max(0, (out.starred || 0) + (patch.starred ? 1 : -1))
-          }
-          return out
-        })
+        // 定点重试用的是同一个函数，但它改的是摘要字段、不涉及计数，
+        // 所以只在带 read / starred 时才动 counts（否则会凭空算出一个负数）。
+        if (typeof patch.read === 'boolean' || typeof patch.starred === 'boolean') {
+          setCounts((prev) => {
+            const out = { ...prev }
+            if (typeof patch.read === 'boolean' && (item.read === true) !== patch.read) {
+              out.unread = Math.max(0, (out.unread || 0) + (patch.read ? -1 : 1))
+            }
+            if (typeof patch.starred === 'boolean' && (item.starred === true) !== patch.starred) {
+              out.starred = Math.max(0, (out.starred || 0) + (patch.starred ? 1 : -1))
+            }
+            return out
+          })
+        }
+        // 只同步本地，不回写服务端（摘要字段由 retry-summaries 自己落盘）
+        if (patch.summary !== undefined || patch.summaryError !== undefined) return
         api('item', { id: item.id, ...patch }).catch((error) => {
           // 失败就把本地改动回滚，别让界面和服务端不一致
           setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...item } : i)))
           setNote({ kind: 'err', text: error.message })
         })
+      }
+
+      /**
+       * 手动补分区（被引百分位）。
+       *
+       * 为什么单独一个按钮：`citationPercentile` 是后加的字段，老论文从没查过，
+       * 而 `runScan` 末尾才会顺带补一次 —— 扫描间隔是 12 小时，不点这个按钮
+       * 面板上的分区徽章要等半天才出现。接口本身是幂等的（30 天窗口内不重查）。
+       */
+      const backfillQuartiles = () => {
+        setBusy('quartile')
+        setNote(null)
+        api('backfill-percentiles', {})
+          .then((result) => {
+            if (result.state) applyState(result.state)
+            if (Number(result.filled) > 0) {
+              setNote({
+                kind: 'ok',
+                text: `${t('quartile_backfill_done')} · ${t('quartile_filled')} ${result.filled} ${t('papers_unit')}（${result.withQuartile}/${result.total}）`,
+              })
+            } else {
+              // 0 有两种含义：全都能查到的已经查过了（窗口内），或者上游确实没有
+              setNote({ kind: 'ok', text: `${t('quartile_backfill_done')} · ${t('quartile_none_new')}` })
+            }
+          })
+          .catch((error) =>
+            setNote({
+              kind: 'err',
+              text:
+                error.status === 405 || error.status === 404
+                  ? `${t('retry_need_restart')}（HTTP ${error.status}）`
+                  : error.message,
+            }),
+          )
+          .finally(() => setBusy(''))
       }
 
       const markAllRead = () => {
@@ -1726,6 +1910,14 @@ window.__ModuleLoader__.load({
             }
             if (Number(result.backfilled) > 0) {
               facts.push(`${t('backfilled')} ${result.backfilled} ${t('papers_unit')}`)
+            }
+            // 这次补到多少篇的分区（被引百分位）。它是后加的字段，老论文要靠这一步补。
+            if (Number(result.percentilesFilled) > 0) {
+              facts.push(`${t('quartiles_filled')} ${result.percentilesFilled} ${t('papers_unit')}`)
+            }
+            // 顺手救回来的历史失败条目 —— 用户之前看到过红字，这里得告诉他好了
+            if (Number(result.retriedSummaries) > 0) {
+              facts.push(`${t('retried_summaries')} ${result.retriedSummaries} ${t('papers_unit')}`)
             }
             const meta = facts.length > 0 ? `（${facts.join(' · ')}）` : ''
             const errors = Array.isArray(result.errors) && result.errors.length > 0
@@ -1798,6 +1990,60 @@ window.__ModuleLoader__.load({
           return
         }
         if (item.read !== true) patchItem(item, { read: true })
+      }
+
+      /**
+       * 定点重试一篇失败的摘要。
+       *
+       * 为什么不复用整轮扫描：用户点的是「这一篇」，扫描要跑十几个源、可能几分钟，
+       * 而且新论文会挤进来。这里只重发这一条的提示词。
+       * 输出被截断的那批顺手**提**一档深度 —— 各档输出上限是 brief 350 < standard 1000
+       * < deep 1600，降档只会让模型更没空间写正文，反而更容易截断。
+       */
+      const retrySummary = (item) => {
+        const currentDepth = (scanDraft && scanDraft.summaryDepth) || (data && data.settings && data.settings.scan.summaryDepth) || 'standard'
+        // 输出被截断 → 提一档（预算更大）；降级提取（模型写了长篇散文而不是 JSON）→
+        // 保持原档，那种情况不是预算不够，而是没按格式写。
+        const wasTruncated =
+          item.summaryErrorCode === 'truncated' ||
+          (item.summary !== null && typeof item.summary === 'object' && item.summary.truncated === true)
+        const nextDepth = wasTruncated
+          ? currentDepth === 'deep'
+            ? 'deep'
+            : currentDepth === 'brief'
+              ? 'standard'
+              : 'deep'
+          : currentDepth
+        setBusy(`retry:${item.id}`)
+        setNote(null)
+        api('retry-summaries', { id: item.id, depth: nextDepth, limit: 1 })
+          .then((result) => {
+            // 服务端会把这一篇的最新状态带回来，就地替换即可，不用重拉整页
+            if (result.item) {
+              patchItem(item, {
+                summary: result.item.summary,
+                summaryError: result.item.summaryError,
+                summaryErrorCode: result.item.summaryErrorCode,
+              })
+            }
+            setNote(
+              result.repaired > 0
+                ? { kind: 'ok', text: t('retry_ok') }
+                : { kind: 'err', text: t('retry_still_failed') },
+            )
+          })
+          .catch((error) =>
+            setNote({
+              kind: 'err',
+              // 405/404 都是「面板是新的、后台还是旧进程」——两个半边热更新的时机不同，
+              // 这种时候说「HTTP 405」用户完全无从下手，直接告诉他重启。
+              text:
+                error.status === 405 || error.status === 404
+                  ? `${t('retry_need_restart')}（HTTP ${error.status}）`
+                  : error.message,
+            }),
+          )
+          .finally(() => setBusy(''))
       }
 
       if (data === null) {
@@ -1943,6 +2189,8 @@ window.__ModuleLoader__.load({
                 onToggleRead: (target, next) => patchItem(target, { read: next }),
                 onToggleStar: (target, next) => patchItem(target, { starred: next }),
                 onDeepRead: deepRead,
+                onRetrySummary: retrySummary,
+                retrying: busy === `retry:${item.id}`,
               }),
             ),
         items.length > 0
@@ -2452,6 +2700,24 @@ window.__ModuleLoader__.load({
                     busy === 'backfill' ? t('backfill_running') : t('backfill'),
                   ),
                   h('span', { className: 'drr-hint drr-hint-inline' }, t('backfill_hint')),
+                ),
+                // 补分区（被引百分位）。它是后加的字段，老论文从没查过 —— 不点这个
+                // 按钮就只能等下一轮扫描末尾顺带补。
+                h(
+                  'div',
+                  { className: 'drr-presets' },
+                  h('span', { className: 'drr-presets-label' }, t('quartile_backfill')),
+                  h(
+                    'button',
+                    {
+                      className: 'drr-btn drr-btn-sm',
+                      type: 'button',
+                      disabled: busy !== '',
+                      onClick: backfillQuartiles,
+                    },
+                    busy === 'quartile' ? t('quartile_backfilling') : t('quartile_backfill'),
+                  ),
+                  h('span', { className: 'drr-hint drr-hint-inline' }, t('quartile_backfill_hint')),
                 ),
                 h(
                   'label',

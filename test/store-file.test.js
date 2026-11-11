@@ -238,3 +238,46 @@ test('老 state 里没有 citationPercentile 时读成 null，不能变成 0（�
   assert.equal(quartileOf(byId.get('b').citationPercentile), null)
   assert.equal(quartileOf(byId.get('c').citationPercentile), 'Q1')
 })
+
+test('摘要的失败分类与降级标记能落盘读回，不会在 normalize 时被丢掉', async (t) => {
+  const dir = await tempDir(t)
+  await fsp.writeFile(
+    path.join(dir, 'state.json'),
+    JSON.stringify({
+      version: 1,
+      topics: [],
+      items: [
+        {
+          id: 'fail',
+          title: 'unparsable',
+          summaryError: 'LLM 没有返回可解析的摘要（前 160 字：……）',
+          summaryErrorCode: 'unparsable',
+        },
+        {
+          id: 'salvaged',
+          title: '降级提取',
+          summary: { tldr: '一句话', salvaged: true, tags: [] },
+        },
+        {
+          id: 'truncated',
+          title: '被截断',
+          summary: { tldr: '一句话', truncated: true, tags: [] },
+        },
+      ],
+      seen: {},
+      settings: {},
+    }),
+    'utf8',
+  )
+
+  const state = await createStore({}, { dataDir: dir }).load()
+  const byId = new Map(state.items.map((item) => [item.id, item]))
+
+  // 失败分类必须活下来 —— 面板要靠它给「换个模型 / 稍后重试」的建议
+  assert.equal(byId.get('fail').summaryErrorCode, 'unparsable')
+  assert.match(byId.get('fail').summaryError, /没有返回可解析的摘要/)
+  // 没有分类的老数据读成空串，不影响渲染
+  assert.equal(byId.get('salvaged').summaryErrorCode, '')
+  assert.equal(byId.get('salvaged').summary.salvaged, true)
+  assert.equal(byId.get('truncated').summary.truncated, true)
+})

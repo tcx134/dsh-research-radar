@@ -178,6 +178,11 @@ function normalizeItem(raw) {
     citationPercentile: Number.isFinite(Number(raw.citationPercentile)) && raw.citationPercentile !== null
       ? Number(raw.citationPercentile)
       : null,
+    // 上一次查这个百分位的时间。百分位随被引增长而变化，但它不是「补一次就完事」
+    // 也不是「每轮都值得查」的字段 —— 靠这个时间戳把重查窗口控制在 30 天。
+    // 注意：这里不加这个字段的话，normalizeItem 会把它丢掉，于是每次扫描都
+    // 认为「没查过」，把全库的 DOI 重新查一遍。
+    citationPercentileAt: asString(raw.citationPercentileAt),
     openAccess: asBool(raw.openAccess, false),
     oaPdfUrl: asString(raw.oaPdfUrl),
     matchedIn: asString(raw.matchedIn),
@@ -185,6 +190,10 @@ function normalizeItem(raw) {
     quality: raw.quality && typeof raw.quality === 'object' ? raw.quality : null,
     summary: raw.summary && typeof raw.summary === 'object' ? raw.summary : null,
     summaryError: asString(raw.summaryError),
+    // 失败分类（unparsable / truncated / llm-transient / llm-failed / no-route / aborted）。
+    // 存下来的用处：面板能按类型给不同建议（改深度 / 换模型 / 稍后重试），
+    // 而不是一律显示「摘要失败」让用户猜。
+    summaryErrorCode: asString(raw.summaryErrorCode),
     discoveredAt: asString(raw.discoveredAt, new Date().toISOString()),
     read: asBool(raw.read, false),
     starred: asBool(raw.starred, false),

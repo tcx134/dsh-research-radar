@@ -526,6 +526,279 @@ test('「加载更多」用当前条数作为 offset', async () => {
   }
 })
 
+test('摘要失败的卡片有「重新总结」按钮，点了只重试这一篇并就地更新', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const broken = { ...sampleState().items[1], summaryErrorCode: 'unparsable' }
+  const fixed = {
+    tldr: '重新总结成功了。',
+    problem: '问题',
+    method: '方法',
+    findings: '结论',
+    innovation: '创新',
+    limitations: '局限',
+    relevance: '相关性',
+    tags: ['金属橡胶'],
+  }
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/retry-summaries')) {
+      return {
+        body: {
+          ok: true,
+          repaired: 1,
+          depth: 'standard',
+          item: { id: broken.id, summary: fixed, summaryError: '', summaryErrorCode: '' },
+          state: sampleState(),
+        },
+      }
+    }
+    return {
+      body: {
+        ...sampleState(),
+        items: [sampleState().items[0], broken],
+      },
+    }
+  })
+  try {
+    const tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /LLM 未返回可解析的 JSON/)
+
+    const retryButton = buttonByText(tree, '重新总结')
+    assert.ok(retryButton, '可重试的失败卡片应该有「重新总结」按钮')
+    retryButton.props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const posts = fetchStub.calls.filter((c) => c.method === 'POST' && c.url.includes('/retry-summaries'))
+    assert.equal(posts.length, 1, '应该只发一次定点重试请求')
+    assert.deepEqual(posts[0].body, { id: broken.id, depth: 'standard', limit: 1 })
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('输出被截断时「重新总结」自动提一档深度', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const cut = { ...sampleState().items[1], summaryErrorCode: 'truncated' }
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/retry-summaries')) {
+      return { body: { ok: true, repaired: 0, depth: 'deep', item: null, state: sampleState() } }
+    }
+    return { body: { ...sampleState(), items: [sampleState().items[0], cut] } }
+  })
+  try {
+    const tree = await mount(mini, Panel)
+    const retryButton = buttonByText(tree, '重新总结')
+    assert.ok(retryButton, '截断的卡片也应该能重试')
+    retryButton.props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const posts = fetchStub.calls.filter((c) => c.method === 'POST' && c.url.includes('/retry-summaries'))
+    assert.equal(posts.length, 1)
+    // 当前设置是 standard，截断时提到 deep —— 各档输出上限是 350/1000/1600，
+    // 降档只会让模型更没空间写正文
+    assert.equal(posts[0].body.depth, 'deep')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('后端还是旧进程（404）时「重新总结」提示重启，而不是丢一个 HTTP 码', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const broken = { ...sampleState().items[1], summaryErrorCode: 'unparsable' }
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/retry-summaries')) {
+      return { ok: false, status: 404, body: { error: '未找到' } }
+    }
+    return { body: { ...sampleState(), items: [sampleState().items[0], broken] } }
+  })
+  try {
+    const tree = await mount(mini, Panel)
+    const retryButton = buttonByText(tree, '重新总结')
+    assert.ok(retryButton)
+    retryButton.props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+    const after = await mount(mini, Panel)
+    assert.match(textOf(after), /后台插件还是旧版本/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('配置类失败（no-route）不给「重新总结」按钮', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const configFail = {
+    ...sampleState().items[1],
+    summaryError: '未找到可用的 LLM 路由',
+    summaryErrorCode: 'no-route',
+  }
+  const fetchStub = installFetch(() => ({
+    body: { ...sampleState(), items: [sampleState().items[0], configFail] },
+  }))
+  try {
+    const tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /未找到可用的 LLM 路由/)
+    assert.ok(!buttonByText(tree, '重新总结'), '配置错点重试也白点，不该给按钮')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('降级提取的卡片带「重新总结」，点了用当前深度重做这一篇', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const salvaged = {
+    ...sampleState().items[0],
+    summary: { ...sampleState().items[0].summary, salvaged: true },
+    summaryError: '',
+  }
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/retry-summaries')) {
+      return {
+        body: {
+          ok: true,
+          repaired: 1,
+          depth: 'standard',
+          item: {
+            id: salvaged.id,
+            summary: { ...sampleState().items[0].summary, salvaged: false },
+            summaryError: '',
+            summaryErrorCode: '',
+          },
+          state: sampleState(),
+        },
+      }
+    }
+    return { body: { ...sampleState(), items: [salvaged] } }
+  })
+  try {
+    const tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /降级提取/, '降级提取的徽章要能看见')
+
+    const retryButton = buttonByText(tree, '重新总结')
+    assert.ok(retryButton, '降级提取的结果也必须能重做，否则用户没法再试一次')
+    retryButton.props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const posts = fetchStub.calls.filter((c) => c.method === 'POST' && c.url.includes('/retry-summaries'))
+    assert.equal(posts.length, 1)
+    // 降级提取不是「输出太长」，降档只会让正文更短，所以保持当前深度
+    assert.equal(posts[0].body.depth, 'standard')
+    assert.deepEqual(posts[0].body.id, salvaged.id)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('已截断的成功摘要也能重做，且照样自动提一档', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const cut = {
+    ...sampleState().items[0],
+    summary: { ...sampleState().items[0].summary, truncated: true },
+    summaryError: '',
+    summaryErrorCode: '',
+  }
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/retry-summaries')) {
+      return { body: { ok: true, repaired: 1, depth: 'deep', item: null, state: sampleState() } }
+    }
+    return { body: { ...sampleState(), items: [cut] } }
+  })
+  try {
+    const tree = await mount(mini, Panel)
+    const retryButton = buttonByText(tree, '重新总结')
+    assert.ok(retryButton, '被截断的结果也应该能重做')
+    retryButton.props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const posts = fetchStub.calls.filter((c) => c.method === 'POST' && c.url.includes('/retry-summaries'))
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].body.depth, 'deep', '截断应该提到 deep（预算更大）')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('重做已成功的摘要又失败时，卡片上要看得见新错误（别装作没发生）', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const salvaged = {
+    ...sampleState().items[0],
+    summary: { ...sampleState().items[0].summary, salvaged: true },
+    summaryError: '',
+    summaryErrorCode: '',
+  }
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/retry-summaries')) {
+      // 服务端保留旧摘要、挂上新错误、repaired 为 0
+      return {
+        body: {
+          ok: true,
+          repaired: 0,
+          depth: 'standard',
+          item: {
+            id: salvaged.id,
+            summary: salvaged.summary,
+            summaryError: 'LLM 没有返回可解析的摘要（前 160 字：）',
+            summaryErrorCode: 'unparsable',
+          },
+          state: sampleState(),
+        },
+      }
+    }
+    return { body: { ...sampleState(), items: [salvaged] } }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '重新总结').props.onClick()
+    // fetch → .then → setItems，要多等几个宏任务状态才落定
+    await new Promise((r) => setTimeout(r, 10))
+    tree = await mount(mini, Panel)
+
+    const text = textOf(tree)
+    // 旧摘要还在（卡片仍是「结构化」的），但失败必须说出来 ——
+    // 否则用户只看到「这次还是没成功」，回卡片一看啥也没变，以为是界面 bug
+    assert.match(text, /没有返回可解析的摘要/)
+    assert.match(text, /这次还是没成功/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('正常摘要不该出现「重新总结」按钮', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  // 只留那条摘要正常的第一篇：第二篇本身是失败记录，按设计就该有按钮
+  const fetchStub = installFetch(() => ({ body: { ...sampleState(), items: [sampleState().items[0]] } }))
+  try {
+    const tree = await mount(mini, Panel)
+    assert.ok(!buttonByText(tree, '重新总结'), '摘要好好的就别给重做入口')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('tldr 是从正文里摘出来的时候，卡片上要注明来源', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const derived = {
+    ...sampleState().items[0],
+    summary: { ...sampleState().items[0].summary, tldrDerived: true },
+  }
+  const fetchStub = installFetch(() => ({ body: { ...sampleState(), items: [derived] } }))
+  try {
+    const tree = await mount(mini, Panel)
+    // 模型自己没写一句话结论、我们拿「主要内容」第一句顶上的，必须说明来源，
+    // 否则用户会把它当成模型的结论
+    assert.match(textOf(tree), /一句话结论取自/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
 test('「精读」按钮把论文提示词塞进新会话，并把该条标为已读', async () => {
   const mini = makeReact()
   const { Panel, workspaceCalls } = await loadClient(mini.React)
@@ -1213,6 +1486,84 @@ test('设置页能选时间范围预设与解析深度，并随 settings 一起�
     assert.ok(post, '保存设置应该 POST /settings')
     assert.equal(post.body.settings.scan.lookbackDays, 365)
     assert.equal(post.body.settings.scan.summaryDepth, 'brief')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('「补分区」走独立端点，并把新补到的篇数报出来', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/backfill-percentiles')) {
+      return { body: { ok: true, filled: 25, withQuartile: 25, total: 40, state: sampleState() } }
+    }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '设置').props.onClick()
+    tree = await mount(mini, Panel)
+
+    fetchStub.calls.length = 0
+    buttonByText(tree, '补分区').props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const post = fetchStub.calls.find((c) => c.method === 'POST' && c.url.endsWith('/backfill-percentiles'))
+    assert.ok(post, '补分区应该 POST /backfill-percentiles')
+
+    tree = await mount(mini, Panel)
+    const note = textOf(tree)
+    assert.ok(note.includes('补分区完成'), `应提示完成，实际：${note.slice(0, 200)}`)
+    assert.ok(note.includes('新补到 25 篇'), '应报告新补到的篇数')
+    assert.ok(note.includes('25/40'), '应报告带分区的总数，用户才知道还差哪些')
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('没有可补的分区时，提示要说清是「查过了」而不是失败', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/backfill-percentiles')) {
+      return { body: { ok: true, filled: 0, withQuartile: 25, total: 40, state: sampleState() } }
+    }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '设置').props.onClick()
+    tree = await mount(mini, Panel)
+    buttonByText(tree, '补分区').props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    tree = await mount(mini, Panel)
+    const note = textOf(tree)
+    assert.ok(note.includes('没有需要补的'), `filled=0 时要说明原因，实际：${note.slice(0, 200)}`)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('后端还是旧进程（404）时，「补分区」提示重启而不是丢一个 HTTP 码', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch((url) => {
+    if (url.includes('/backfill-percentiles')) {
+      return { ok: false, status: 404, body: { error: '未知接口: backfill-percentiles' } }
+    }
+    return { body: sampleState() }
+  })
+  try {
+    let tree = await mount(mini, Panel)
+    buttonByText(tree, '设置').props.onClick()
+    tree = await mount(mini, Panel)
+    buttonByText(tree, '补分区').props.onClick()
+    await new Promise((r) => setTimeout(r, 0))
+
+    tree = await mount(mini, Panel)
+    assert.match(textOf(tree), /后台插件还是旧版本/)
   } finally {
     fetchStub.restore()
   }

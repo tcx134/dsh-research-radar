@@ -16,6 +16,7 @@ import {
   paperQuality,
   quartileOf,
   resolveIssnsByDoi,
+  resolvePercentilesByDoi,
 } from '../radar/quality.js'
 
 test('normalizeIssn 认得出各种写法，认不出返回空串', () => {
@@ -337,4 +338,62 @@ test('resolveIssnsByDoi 上游报错时返回空对象，不抛错', async (t) =
     globalThis.fetch = original
   })
   assert.deepEqual(await resolveIssnsByDoi(['10.1/x'], {}), {})
+})
+
+test('resolvePercentilesByDoi 把 {min,max} 取上限当百分位，缺少的条目直接跳过', async (t) => {
+  const original = globalThis.fetch
+  const urls = []
+  globalThis.fetch = async (url) => {
+    urls.push(String(url))
+    const payload = {
+      results: [
+        // 对象形式：取上限 max
+        { doi: 'https://doi.org/10.1016/j.ijthermalsci.2023.108796', cited_by_percentile_year: { min: 95, max: 99 } },
+        // DOI 大小写混杂也要能对上
+        { doi: 'https://doi.org/10.3390/POLYM1613045', cited_by_percentile_year: { min: 88, max: 96 } },
+        // 太新的论文：上游给 null，绝不能变成 0
+        { doi: 'https://doi.org/10.3390/ma19214680', cited_by_percentile_year: null },
+        // 只有 min 时退回 min
+        { doi: 'https://doi.org/10.1/only-min', cited_by_percentile_year: { min: 61, max: null } },
+      ],
+    }
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) }
+  }
+  t.after(() => {
+    globalThis.fetch = original
+  })
+
+  const out = await resolvePercentilesByDoi(
+    [
+      '10.1016/j.ijthermalsci.2023.108796',
+      'https://doi.org/10.3390/polym1613045',
+      '10.3390/ma19214680',
+      '10.1/only-min',
+      'doi:10.1016/j.ijthermalsci.2023.108796',
+      '',
+      null,
+    ],
+    {},
+  )
+  assert.deepEqual(out, {
+    '10.1016/j.ijthermalsci.2023.108796': 99,
+    '10.3390/polym1613045': 96,
+    '10.1/only-min': 61,
+  })
+  // null 的条目不能出现在结果里 —— 写 0 会让新论文被判成 Q4
+  assert.equal(Object.hasOwn(out, '10.3390/ma19214680'), false)
+  // 去重后 4 个 DOI，一次请求；且 OR 查询只写一次 `doi:` 前缀
+  assert.equal(urls.length, 1)
+  const filter = decodeURIComponent(new URL(urls[0]).searchParams.get('filter'))
+  assert.equal(filter.split('doi:').length, 2)
+  assert.equal(new URL(urls[0]).searchParams.get('select'), 'doi,cited_by_percentile_year')
+})
+
+test('resolvePercentilesByDoi 上游报错时返回空对象，不抛错', async (t) => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => '{"error":"bad"}' })
+  t.after(() => {
+    globalThis.fetch = original
+  })
+  assert.deepEqual(await resolvePercentilesByDoi(['10.1/x'], {}), {})
 })

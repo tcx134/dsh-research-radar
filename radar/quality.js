@@ -347,6 +347,84 @@ export async function resolveIssnsByDoi(dois, api) {
 }
 
 /**
+ * OpenAlex 的 `cited_by_percentile_year` 是 `{min, max}`（偶尔是纯数字）。
+ *
+ * 取上限 `max` 判档：min 90 / max 96 的论文算「前 4%」而不是「前 10%」。
+ * 论文太新还没算出来时是 `null` → 返回 null，**不是 0**：`Number(null) === 0`
+ * 会把每篇新论文判成 Q4，这个坑在本仓库已经踩过六次。
+ */
+function percentileOfValue(value) {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    // 纯数字也接受（OpenAlex 早期数据里出现过）
+    const direct = finiteNumber(value)
+    return direct === null ? null : Math.max(0, Math.min(100, Math.round(direct)))
+  }
+  const max = finiteNumber(value.max)
+  if (max !== null) return Math.max(0, Math.min(100, Math.round(max)))
+  const min = finiteNumber(value.min)
+  return min === null ? null : Math.max(0, Math.min(100, Math.round(min)))
+}
+
+/**
+ * 按 DOI 批量查「同年同领域被引百分位」。
+ *
+ * 为什么需要单独一趟：「分区」（Q1–Q4）来自 `cited_by_percentile_year`，而它是
+ * 论文级字段、随时间变化（被引涨了百分位就涨）。更关键的是**老论文从没查过它** ——
+ * 字段是后加的，`backfillQuality` 的判据是「有没有 ISSN」，ISSN 补齐后就不再重算，
+ * 于是真实库里 40 篇的百分位全是 null，面板上 40 个分区徽章一个都显示不出来
+ * （上游其实有数据：实测 2023 年的两篇分别是 95–99 和 91–99）。
+ *
+ * 查不到（论文太新、OpenAlex 没收录）就不放进结果，调用方保持 null ——
+ * 绝不能写 0，那会把新论文判成「被引排最后」的 Q4。
+ *
+ * `|` OR 查询只能写一次字段前缀（`filter=doi:a|b` 而非 `doi:a|doi:b`），
+ * 与 `resolveIssnsByDoi` 相同，两处都实测过。
+ *
+ * @param {string[]} dois
+ * @param {{mailto?: string}} [api]
+ * @returns {Promise<Record<string, number>>} 小写 DOI → 百分位（0–100）
+ */
+export async function resolvePercentilesByDoi(dois, api) {
+  const unique = []
+  const seen = new Set()
+  for (const value of Array.isArray(dois) ? dois : []) {
+    const doi = String(value ?? '')
+      .trim()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+      .replace(/^doi:\s*/i, '')
+      .toLowerCase()
+    if (doi === '' || seen.has(doi)) continue
+    seen.add(doi)
+    unique.push(doi)
+  }
+
+  const out = {}
+  for (let i = 0; i < unique.length; i += ISSN_BATCH) {
+    const chunk = unique.slice(i, i + ISSN_BATCH)
+    const url =
+      'https://api.openalex.org/works?filter=' +
+      encodeURIComponent(`doi:${chunk.join('|')}`) +
+      '&select=doi,cited_by_percentile_year&per-page=50' +
+      mailtoParam(api)
+    let payload
+    try {
+      payload = JSON.parse(await getText(url))
+    } catch {
+      continue
+    }
+    for (const work of Array.isArray(payload?.results) ? payload.results : []) {
+      const doi = String(work?.doi ?? '')
+        .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+        .toLowerCase()
+      const percentile = percentileOfValue(work?.cited_by_percentile_year)
+      if (doi === '' || percentile === null) continue
+      out[doi] = percentile
+    }
+  }
+  return out
+}
+
+/**
  * 期刊指标磁盘缓存。指标变化很慢（一个月一次足够），没必要每轮扫描都请求。
  * 文件放在 dataDir 下，跟 state.json 同级。
  */

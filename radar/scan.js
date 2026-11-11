@@ -1,7 +1,7 @@
 import { collectFromSource, shouldSpread } from './sources.js'
 import { summarizePaper, normalizeSummaryDepth, summaryDepthSpec } from './summarize.js'
 import { fetchFullText, condenseText, FULLTEXT_TIMEOUT_MS } from './fulltext.js'
-import { paperQuality, normalizeIssn, resolveIssnsByDoi } from './quality.js'
+import { paperQuality, normalizeIssn, resolveIssnsByDoi, resolvePercentilesByDoi, quartileOf, finiteNumber } from './quality.js'
 import { sendMail, digestToHtml } from './mail.js'
 import { dedupeKeys } from './dedupe.js'
 
@@ -125,7 +125,16 @@ export async function mapLimit(list, limit, fn) {
   return results
 }
 
-/** 单篇摘要：失败重试一次，仍失败就只记 summaryError，不抛。 */
+/**
+ * 单篇摘要：能重试的失败重试，不能重试的直接记下来。
+ *
+ * 为什么要看 `error.retryable`：旧实现无条件重试一次，问题有两面 ——
+ *   - 限流、超时这类瞬时故障，重试才有价值；
+ *   - 「模型没返回可解析的 JSON」是它没听懂格式要求，重试大概率再犯一次，
+ *     而一次 standard 档的重试要再喂 12000 字全文，白烧输入 token。
+ * 所以只对 `retryable === true` 的错误重试，退避时间也拉长一点（限流建议
+ * 12 秒，我们取 4 秒起步）。
+ */
 async function summarizeOne(ctx, config, item, topic, depth, options = {}) {
   const level = normalizeSummaryDepth(depth)
   const spec = summaryDepthSpec(level)
@@ -143,18 +152,31 @@ async function summarizeOne(ctx, config, item, topic, depth, options = {}) {
     }
   }
 
+  const MAX_ATTEMPTS = 2
   let lastError = null
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     try {
       item.summary = await summarizePaper(ctx, config, item, topic, undefined, depth, fullText)
       item.summaryError = ''
       return null
     } catch (error) {
       lastError = error
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 2500))
+      const retryable = error !== null && typeof error === 'object' && error.retryable === true
+      const isLast = attempt === MAX_ATTEMPTS - 1
+      // 不可重试，或已经是最后一轮：立刻收手
+      if (!retryable || isLast) break
+      await new Promise((resolve) => setTimeout(resolve, 4000))
     }
   }
-  item.summaryError = String(lastError?.message ?? lastError)
+
+  // 错误文案入库时要能看出「这是哪一类失败」，否则用户只能看到一句中文
+  // 猜不出该改配置还是等一会儿再扫
+  const code = lastError !== null && typeof lastError === 'object' && typeof lastError.code === 'string' ? lastError.code : ''
+  const detail = lastError !== null && typeof lastError === 'object' && typeof lastError.detail === 'string' ? lastError.detail : ''
+  const message = String(lastError?.message ?? lastError)
+  item.summaryError = detail !== '' ? `${message}（${detail}）` : message
+  if (code !== '') item.summaryErrorCode = code
+  else delete item.summaryErrorCode
   return item.summaryError
 }
 
@@ -313,6 +335,226 @@ export async function backfillQuality(store, options = {}) {
 }
 
 /**
+ * 给库里已有的论文补「同年同领域被引百分位」，并据此更新分区。
+ *
+ * 为什么必须有这一步：`citationPercentile` 是后加的字段，而 `backfillQuality`
+ * 的判据是「有没有 ISSN」—— ISSN 补齐后就不再重算，于是这个字段永远进不来。
+ * 实测真实库 40 篇的 `citationPercentile` 全是 null、`quality.quartile` 全空，
+ * 面板上一个分区徽章都显示不出来，而上游（OpenAlex）其实有数据。
+ *
+ * 与 `backfillQuality` 的区别：
+ *   - 判据是「有 DOI，且上次查过这个字段已经超过 refreshDays（默认 30 天）」，
+ *     不做全量重算；
+ *   - 百分位会随被引增长而变化，所以它天然不是「补一次就完事」的字段，
+ *     但也不值得每轮都查 —— `citationPercentileAt` 就是为这个窗口存的。
+ *
+ * 查不到的（论文太新、OpenAlex 没收录）也要打时间戳，否则最新论文每轮都被重查。
+ *
+ * @param {object} store
+ * @param {object} options `{api, journals, percentileResolver, refreshDays, now}`
+ * @returns {Promise<number>} 真正补到百分位的篇数
+ */
+export async function backfillPercentiles(store, options = {}) {
+  const state = await store.load()
+  const items = Array.isArray(state.items) ? state.items : []
+  const now = finiteNumber(options.now) ?? Date.now()
+  const refreshDays = finiteNumber(options.refreshDays) ?? 30
+  const staleBefore = now - Math.max(1, refreshDays) * DAY_MS
+
+  const pending = items.filter((item) => {
+    if (item === null || typeof item !== 'object') return false
+    if (String(item.doi ?? '') === '') return false
+    const checkedAt = Date.parse(String(item.citationPercentileAt ?? ''))
+    return !Number.isFinite(checkedAt) || checkedAt < staleBefore
+  })
+  if (pending.length === 0) return 0
+
+  const resolver =
+    typeof options.percentileResolver === 'function' ? options.percentileResolver : resolvePercentilesByDoi
+  let found = {}
+  try {
+    found = await resolver(
+      pending.map((item) => item.doi),
+      options.api ?? state.settings.api ?? {},
+    )
+  } catch {
+    return 0
+  }
+
+  const checkedAt = nowIso()
+  const journals = options.journals ?? null
+  // id → {percentile, quality}；percentile 为 null 表示这次仍然查不到（只打时间戳）
+  const updates = new Map()
+  for (const item of pending) {
+    const doi = String(item.doi ?? '')
+      .trim()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+      .replace(/^doi:\s*/i, '')
+      .toLowerCase()
+    const raw = found?.[doi]
+    const value = finiteNumber(raw)
+    if (value === null) {
+      updates.set(item.id, { percentile: null, quality: undefined })
+      continue
+    }
+    const percentile = Math.max(0, Math.min(100, Math.round(value)))
+    updates.set(item.id, {
+      percentile,
+      quality: qualityWithPercentile(item, percentile, journals, now),
+    })
+  }
+  if (updates.size === 0) return 0
+
+  let filled = 0
+  for (const entry of updates.values()) if (entry.percentile !== null) filled += 1
+
+  await store.mutate((draft) => {
+    for (const item of draft.items) {
+      if (item === null || typeof item !== 'object') continue
+      const update = updates.get(item.id)
+      if (update === undefined) continue
+      item.citationPercentileAt = checkedAt
+      if (update.percentile !== null) item.citationPercentile = update.percentile
+      if (update.quality !== undefined && update.quality !== null) item.quality = update.quality
+    }
+  })
+  return filled
+}
+
+/**
+ * 拿到新百分位之后更新质量分。
+ *
+ * **只有拿到 `journals` 才整体重算**：`paperQuality()` 需要期刊指标才能算出那 70%
+ * 的权重，传 null 进去会把它当成「这本刊没被收录」，把一篇顶刊论文从 high 直接
+ * 打成 medium。没有指标时退化成只改分区相关的两个字段，其余分数与理由原样保留 ——
+ * 宁可分数略旧，也不能因为缺一个信号把论文降档。
+ *
+ * @returns {object|null} 新的 quality；null 表示原本就没有分数
+ */
+function qualityWithPercentile(item, percentile, journals, now) {
+  const existing = item.quality !== null && typeof item.quality === 'object' ? item.quality : null
+  if (journals !== null && journals !== undefined) {
+    return paperQuality({ ...item, citationPercentile: percentile }, { journals, now })
+  }
+  if (existing === null) return null
+  const quartile = quartileOf(percentile)
+  const reasons = Array.isArray(existing.reasons)
+    ? existing.reasons.filter((reason) => !/^Q[1-4]（被引前/.test(String(reason)))
+    : []
+  if (quartile !== null) reasons.push(`${quartile}（被引前 ${Math.max(1, 100 - percentile)}%）`)
+  return { ...existing, citationPercentile: percentile, quartile, reasons }
+}
+
+/**
+ * 重试库里「摘要失败」的老论文。
+ *
+ * 为什么必须有这一步：`seen` 去重是按论文维度的 —— 一篇论文一旦入库，
+ * 以后扫描就永远跳过它。所以「摘要失败」一旦发生，这条记录会**一直**是
+ * 红字，用户只能手动清空重抓。实测用户库里有 2 条就是这样，其中一条
+ * 正是「模型写了 Markdown」这种已经被解析层修好的情况。
+ *
+ * 只重试**值得重试**的：
+ *   - `unparsable` / `truncated`：解析器已经变强了，值得再试一次；
+ *   - `llm-transient`：上次是限流/超时，本来就该重来；
+ *   - 空 code 的老数据：不知道原因，试一次看；
+ *   - **不重试** `llm-failed` / `no-route`：配置错，重试只会一次一次地烧，
+ *     而且每篇都要重新抓全文 —— 那是几十秒网络时间。
+ *
+ * @param {object} store
+ * @param {object} options `{ctx, config, depth, fullText, limit, journalCache}`
+ * @returns {Promise<number>} 成功补上摘要有几篇
+ */
+export async function retryFailedSummaries(store, options = {}) {
+  const ctx = options.ctx
+  if (ctx === undefined || ctx === null || typeof ctx.llm?.stream !== 'function') return 0
+  const state = await store.load()
+  const items = Array.isArray(state.items) ? state.items : []
+  const RETRYABLE = new Set(['', 'unparsable', 'truncated', 'llm-transient'])
+  // 面板上点「重新总结」只想救这一篇，所以支持按 id 定点重试
+  const onlyId = typeof options.itemId === 'string' ? options.itemId : ''
+  // 定点重试时允许「重做已经成功的摘要」。
+  //
+  // 为什么需要：降级提取（salvaged）与截断（truncated）的条目**算成功**，
+  // summaryError 是空的。但用户看到「降级提取」徽章、或者标签里一堆噪音时，
+  // 想换深度/换模型再试一次 —— 按原判据（必须 summaryError 非空）根本选不中，
+  // 按钮点了会回「没有可重试的摘要」。这里对点名的那一篇放宽：
+  // 只有 summaryError 非空、或者已经是降级/截断的结果，才值得重做。
+  // 全量自动重试（onlyId === ''）不受影响，仍然是「只救失败的」。
+  const redoable = (item) =>
+    (item.summaryError !== '' && RETRYABLE.has(String(item.summaryErrorCode ?? ''))) ||
+    (item.summary !== null &&
+      typeof item.summary === 'object' &&
+      (item.summary.salvaged === true || item.summary.truncated === true))
+  const candidates = items.filter((item) => {
+    if (onlyId !== '' && item.id === onlyId) return redoable(item)
+    if (onlyId !== '') return false
+    return (
+      item.summaryError !== '' &&
+      (item.summary === null || typeof item.summary !== 'object') &&
+      RETRYABLE.has(String(item.summaryErrorCode ?? ''))
+    )
+  })
+  if (candidates.length === 0) return 0
+
+  // 每轮最多重试这么多篇：一次扫描已经很贵了，不能因为历史欠账把扫描拖到几分钟
+  const limit = Number.isFinite(Number(options.limit)) && Number(options.limit) > 0 ? Math.round(Number(options.limit)) : 5
+  const batch = candidates.slice(0, limit)
+  const topicById = new Map((Array.isArray(state.topics) ? state.topics : []).map((t) => [t.id, t]))
+  const depth = normalizeSummaryDepth(options.depth ?? state.settings.scan.summaryDepth)
+  const fullText = options.fullText !== false
+
+  // 以 summarizeOne 的返回值判断成败，而不是「item.summary 是否非空」。
+  //
+  // 为什么要改：重做一条**已经成功**的摘要（降级提取 / 被截断）时，item.summary
+  // 本来就有旧值。如果这次重做失败，summarizePaper 抛错、item.summary 保持旧对象，
+  // 旧代码靠 `item.summary !== null` 判定就把这次**失败**当成成功：
+  // 旧摘要被原样写回、`summaryError` 还被清空 —— 用户点「重新总结」看到的是
+  // 「已重新生成摘要」，其实一个字都没变（真机实测踩到：空壳重做后仍是空壳）。
+  const outcomes = await mapLimit(batch, SUMMARY_CONCURRENCY, async (item) => ({
+    item,
+    error: await summarizeOne(ctx, options.config ?? {}, item, topicById.get(item.topicId) ?? {}, depth, { fullText }),
+  }))
+
+  // 只把「这次真的成功了」的写回去；又失败的保留新的错误信息（可能是不同的原因）
+  const succeeded = new Map()
+  for (const outcome of outcomes) {
+    if (outcome.error === null) succeeded.set(outcome.item.id, outcome.item)
+  }
+  if (succeeded.size === 0) {
+    // 一篇都没救回来时也把新的错误码写回，否则下次还会按旧原因重试
+    await store.mutate((draft) => {
+      for (const item of batch) {
+        const target = draft.items.find((entry) => entry.id === item.id)
+        if (target === undefined) continue
+        target.summaryError = item.summaryError
+        if (typeof item.summaryErrorCode === 'string' && item.summaryErrorCode !== '') target.summaryErrorCode = item.summaryErrorCode
+      }
+    })
+    return 0
+  }
+
+  await store.mutate((draft) => {
+    for (const item of draft.items) {
+      const fresh = succeeded.get(item.id)
+      if (fresh === undefined) {
+        const attempted = batch.find((entry) => entry.id === item.id)
+        if (attempted !== undefined) {
+          item.summaryError = attempted.summaryError
+          if (typeof attempted.summaryErrorCode === 'string' && attempted.summaryErrorCode !== '') {
+            item.summaryErrorCode = attempted.summaryErrorCode
+          }
+        }
+        continue
+      }
+      item.summary = fresh.summary
+      item.summaryError = ''
+      delete item.summaryErrorCode
+    }
+  })
+  return succeeded.size
+}
+
+/**
  * 组织一封摘要邮件正文。
  */
 export function buildDigest(items, topics) {
@@ -392,6 +634,10 @@ export async function runScan(ctx, config, store, options = {}) {
     lookbackDays: null,
     /** 本次摘要用的解析深度（brief / standard / deep）。 */
     summaryDepth: null,
+    /** 本次抢救回来几篇历史「摘要失败」的论文。 */
+    retriedSummaries: 0,
+    /** 本次补到多少篇的「同年同领域被引百分位」（= 分区 Q1–Q4 的数据来源）。 */
+    percentilesFilled: 0,
   }
 
   if (targets.length === 0) {
@@ -567,6 +813,35 @@ export async function runScan(ctx, config, store, options = {}) {
     })
   } catch {
     result.backfilled = 0
+  }
+
+  // 补被引百分位（= 分区 Q1–Q4）。必须排在 backfillQuality 之后：那一步负责补
+  // ISSN 并算出期刊信号，这一步再叠百分位重算分区；顺序反了会先用旧数据算一遍。
+  try {
+    result.percentilesFilled = await backfillPercentiles(store, {
+      journals,
+      api: settings.api,
+      percentileResolver: options.percentileResolver,
+      refreshDays: options.percentileRefreshDays,
+    })
+  } catch {
+    result.percentilesFilled = 0
+  }
+
+  // 重试历史「摘要失败」的论文。放在扫描末尾、backfill 之后：
+  // 先把能正常处理的做完，再用剩余时间抢救旧的欠账。
+  if (settings.scan.summarize && options.retryFailed !== false) {
+    try {
+      result.retriedSummaries = await retryFailedSummaries(store, {
+        ctx,
+        config,
+        depth,
+        fullText: useFullText,
+        limit: options.retryFailedLimit,
+      })
+    } catch {
+      result.retriedSummaries = 0
+    }
   }
 
   // 邮件推送
