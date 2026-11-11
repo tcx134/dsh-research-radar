@@ -64,8 +64,8 @@ function asBool(value, fallback) {
 }
 
 /**
- * `maxPerTopic` 的老默认值是 8，而 8 篇配额跨源去重后实际只有 16 篇左右的独立论文
- * （见 HANDOFF 11.14）。老用户的 state.json 里存着显式的 8，直接改 `defaultSettings`
+ * `maxPerTopic` 的老默认值是 8，而 8 篇配额跨源去重后实际只有 16 篇左右的独立论文。
+ * 老用户的 state.json 里存着显式的 8，直接改 `defaultSettings`
  * 对他们无效 —— 所以把「正好等于旧默认值」的读成新默认值。
  * 用户手动设成别的值（3、20、40）一律尊重。
  */

@@ -939,8 +939,7 @@ export async function summarizePaper(ctx, config, item, topic, signal, depth = D
   const summary = normalizeSummary(parsed, level)
   const preview = stripCodeFence(first.collected).replace(/\s+/g, ' ').slice(0, 160)
   // 药方必须往「加大预算」方向给：各档 maxTokens 是 brief 350 < standard 1000 < deep 1600，
-  // 建议「降一档」只会让模型更没空间写正文（11.17.10 在「只吐思考」分支踩过一次，
-  // 这里曾经又写反过一次，现在统一成「换更大的输出上限 / 提高一档」）。
+  // 建议「降一档」只会让模型更没空间写正文，所以统一成「换更大的输出上限 / 提高一档」。
   const budgetHint =
     described.kind === 'max-tokens'
       ? level === 'deep'

@@ -655,7 +655,7 @@ test('POST /backfill-percentiles 在窗口内不发网络请求，并报出带�
 })
 
 test('每个端点都能被真的调起来（不许再出现未声明变量这类 500）', async (t) => {
-  // 这条是给 11.20.5 那个 bug 立的规矩：`/backfill-percentiles` 曾经在
+  // 这条是给 `/backfill-percentiles` 立下的规矩：它曾经在
   // `options?.journalCache` 上抛 ReferenceError，`node --check` 和几百个单测
   // 都没抓到，因为没有测试真的打过这个端点。
   // 这里把全部端点各打一遍，只要求「不是 5xx 且不是 X is not defined」：
