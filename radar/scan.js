@@ -414,23 +414,45 @@ export async function backfillPercentiles(store, options = {}) {
     const checkedAt = Date.parse(String(item.citationPercentileAt ?? ''))
     return !Number.isFinite(checkedAt) || checkedAt < staleBefore
   })
-  if (pending.length === 0) return 0
+
+  // 第二类候选：期刊分区是后加的口径，老论文的 `quality` 里没有 `journalQuartile`，
+  // 但它们的 `citationPercentileAt` 还在有效期内 —— 只按时间判新鲜会让这批论文
+  // 永远拿不到期刊分区，档位停留在一开始的「期刊 70% + 被引 30%」旧口径上。
+  // 它们不需要重新查上游（百分位已经有了），只需在有指标与阈值时本地重算一次。
+  const restale = items.filter((item) => {
+    if (item === null || typeof item !== 'object') return false
+    const existing = item.quality
+    if (existing === null || typeof existing !== 'object') return false
+    if (typeof existing.journalQuartile === 'string') return false
+    return normalizeIssn(item.issn ?? '') !== ''
+  })
+
+  const journals = options.journals ?? null
+  const thresholds = options.thresholds ?? null
+  // 重算档位必须同时有期刊指标和子学科阈值：只有指标会算出「无分区」，
+  // 反而把已有的档位抖成 unknown；只有阈值则连影响因子都拿不到。
+  const hasThresholds =
+    thresholds !== null && typeof thresholds === 'object' && Object.keys(thresholds).length > 0
+  const canRestale = journals !== null && journals !== undefined && hasThresholds
+
+  if (pending.length === 0 && (!canRestale || restale.length === 0)) return 0
 
   const resolver =
     typeof options.percentileResolver === 'function' ? options.percentileResolver : resolvePercentilesByDoi
   let found = {}
-  try {
-    found = await resolver(
-      pending.map((item) => item.doi),
-      options.api ?? state.settings.api ?? {},
-    )
-  } catch {
-    return 0
+  // 只有真的要查百分位时才发上游请求：`pending` 为空（全部新鲜）时纯属白发一次。
+  if (pending.length > 0) {
+    try {
+      found = await resolver(
+        pending.map((item) => item.doi),
+        options.api ?? state.settings.api ?? {},
+      )
+    } catch {
+      return 0
+    }
   }
 
   const checkedAt = nowIso()
-  const journals = options.journals ?? null
-  const thresholds = options.thresholds ?? null
   // id → {percentile, quality}；percentile 为 null 表示这次仍然查不到（只打时间戳）
   const updates = new Map()
   for (const item of pending) {
@@ -451,7 +473,8 @@ export async function backfillPercentiles(store, options = {}) {
       quality: qualityWithPercentile(item, percentile, journals, now, thresholds),
     })
   }
-  if (updates.size === 0) return 0
+  const hasRestale = canRestale && restale.length > 0
+  if (updates.size === 0 && !hasRestale) return 0
 
   let filled = 0
   for (const entry of updates.values()) if (entry.percentile !== null) filled += 1
@@ -464,6 +487,18 @@ export async function backfillPercentiles(store, options = {}) {
       item.citationPercentileAt = checkedAt
       if (update.percentile !== null) item.citationPercentile = update.percentile
       if (update.quality !== undefined && update.quality !== null) item.quality = update.quality
+    }
+    // 重算「已有质量分但缺期刊分区」的那批：百分位不用再查，纯本地算。
+    // 放在同一个 mutate 里，避免两次写盘之间被面板读到半旧状态。
+    if (canRestale && restale.length > 0) {
+      const restaleIds = new Set(restale.map((item) => item.id))
+      for (const item of draft.items) {
+        if (!restaleIds.has(item.id)) continue
+        const fresh = paperQuality(item, { journals, thresholds, now })
+        // 算不出分区就原样留着 —— 覆盖只会让它变得更差
+        if (fresh.journalQuartile === null) continue
+        item.quality = fresh
+      }
     }
   })
   return filled

@@ -1,6 +1,6 @@
 import { createStore } from './radar/store.js'
 import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays, retryFailedSummaries, backfillPercentiles } from './radar/scan.js'
-import { createJournalCache, QUALITY_TIERS, JOURNAL_QUARTILES, paperQuality } from './radar/quality.js'
+import { createJournalCache, QUALITY_TIERS, JOURNAL_QUARTILES, paperQuality, normalizeIssn } from './radar/quality.js'
 import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
@@ -705,6 +705,18 @@ export function apply(ctx, config) {
             let thresholds = null
             try {
               await journalCache.load()
+              // 先确保期刊指标本身是最新的：老缓存是「期刊分区」这个口径之前写的，
+              // 里面没有 `subfieldId`（实测用户库 28 本刊全是这样），
+              // 而它们的时间戳还在 30 天有效期内 —— 不主动重抓就永远补不出分区。
+              // `ensure()` 自己认这两种情形（过期 / 缺 subfieldId），是幂等的。
+              const issns = new Set()
+              for (const item of state.items) {
+                if (item === null || typeof item !== 'object') continue
+                if (typeof item.quality?.journalQuartile === 'string') continue
+                const issn = normalizeIssn(item.issn ?? '')
+                if (issn !== '') issns.add(issn)
+              }
+              if (issns.size > 0) await journalCache.ensure([...issns], state.settings.api)
               journals = journalCache.asMap()
               // 没有子学科阈值就算不出期刊分区（新签名里的 journalQuartile），
               // 只能用论文级被引百分位判 Q1–Q4，新论文一律没有分区。

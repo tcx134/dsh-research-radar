@@ -786,6 +786,119 @@ test('backfillQuality 会给缺期刊分区的老分数按分区重算档位', a
   assert.ok(item.quality.score > 0)
 })
 
+/**
+ * 真实场景：用户的库是在「期刊分区」这个口径之前建的，41 篇的
+ * `citationPercentileAt` 都还在 30 天窗口内，而 `quality` 里没有
+ * `journalQuartile`。只按时间判新鲜的话这批论文永远拿不到分区，
+ * 档位一直停在「期刊 70% + 被引 30%」的旧口径上 —— 表现就是重启、
+ * 点「补分区」，面板上还是一个 Q 徽章都没有。
+ */
+test('backfillPercentiles 会给缺期刊分区的老论文本地重算档位，不用再查上游', async (t) => {
+  const dir = await tempDir(t)
+  const fresh = new Date().toISOString()
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'openalex:old-q1',
+        title: 'Already has percentile but no journal quartile',
+        doi: '10.1016/j.ymssp.2025.113000',
+        issn: '0888-3270',
+        venue: 'Mechanical Systems and Signal Processing',
+        publishedAt: '2025-03-01',
+        citations: 40,
+        // 百分位早就查过且还在窗口内 → 不该触发上游请求
+        citationPercentile: 91,
+        citationPercentileAt: fresh,
+        // 旧口径：按综合分切出 high，没有 journalQuartile
+        quality: {
+          score: 68,
+          tier: 'high',
+          reasons: ['期刊影响因子 11.2', '被引 40 次'],
+          impactFactor: 11.24,
+          journalHIndex: 200,
+          citationPercentile: 91,
+          quartile: 'Q1',
+        },
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  const store = createStore({}, { dataDir: dir })
+
+  const journals = new Map([
+    [
+      '0888-3270',
+      {
+        name: 'Mechanical Systems and Signal Processing',
+        twoYearMeanCitedness: 11.24,
+        hIndex: 200,
+        worksCount: 9000,
+        isCore: true,
+        type: 'journal',
+        subfieldId: '2205',
+      },
+    ],
+  ])
+  const thresholds = { 2205: { q1: 4.71, q2: 2.56, q3: 1.25, total: 1704 } }
+
+  let upstreamCalls = 0
+  const filled = await backfillPercentiles(store, {
+    journals,
+    thresholds,
+    percentileResolver: async () => {
+      upstreamCalls += 1
+      return {}
+    },
+  })
+
+  // 没有要查百分位的条目，所以一篇都不算「补到」
+  assert.equal(filled, 0)
+  // 关键：一个上游请求都不该发 —— 已有的百分位是新鲜的
+  assert.equal(upstreamCalls, 0)
+
+  const item = (await store.load()).items[0]
+  assert.equal(item.quality.journalQuartile, 'Q1')
+  assert.equal(item.quality.tier, 'high')
+  assert.equal(item.quality.subfieldId, '2205')
+})
+
+test('backfillPercentiles 没有子学科阈值时不去动已有档位', async (t) => {
+  const dir = await tempDir(t)
+  const fresh = new Date().toISOString()
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'openalex:no-thresholds',
+        title: 'Journal metrics known but thresholds missing',
+        doi: '10.1016/j.ymssp.2025.113000',
+        issn: '0888-3270',
+        citations: 40,
+        citationPercentile: 91,
+        citationPercentileAt: fresh,
+        quality: { score: 68, tier: 'high', reasons: ['期刊影响因子 11.2'], impactFactor: 11.24 },
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  const store = createStore({}, { dataDir: dir })
+  // 有指标但没有阈值：重算只会得到「无分区」，把 high 抖成 unknown
+  const journals = new Map([
+    ['0888-3270', { name: 'MSSP', twoYearMeanCitedness: 11.24, hIndex: 200, subfieldId: '2205' }],
+  ])
+  await backfillPercentiles(store, { journals, thresholds: null, percentileResolver: async () => ({}) })
+  const item = (await store.load()).items[0]
+  assert.equal(item.quality.tier, 'high')
+  assert.equal(item.quality.score, 68)
+})
+
 // ---------------------------------------------------------------------------
 // 历史失败重试：一篇论文入库后 seen 会永远跳过它，所以「摘要失败」不自愈。
 // 解析器变强之后必须有一条路把旧记录救回来，否则用户只能手动清空重抓。
