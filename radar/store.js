@@ -25,8 +25,10 @@ export function defaultSettings() {
       summarize: true,
       // 解析深度：brief（一句话+创新点，最省 token）/ standard / deep（全字段）
       summaryDepth: DEFAULT_SUMMARY_DEPTH,
-      // 抓全文再总结：比只看摘要准得多，但每篇要多花几秒到二十秒网络时间
-      fullText: true,
+      // 抓全文再总结。默认**关**：绝大多数论文的摘要就够判断「值不值得读」，
+      // 而抓 PDF 要走出版社落地页、过反爬、还可能被付费墙挡住，每篇多花几秒
+      // 到几十秒，命中率却只有三成左右。真需要精读时再单独抓。
+      fullText: false,
       lookbackDays: 30,
       lastScanAt: null,
       lastScanNew: 0,
@@ -74,6 +76,20 @@ function migrateMaxPerTopic(value) {
   const n = Math.round(asNumber(value, DEFAULT_MAX_PER_TOPIC))
   const next = n === LEGACY_MAX_PER_TOPIC ? DEFAULT_MAX_PER_TOPIC : n
   return Math.min(50, Math.max(1, next))
+}
+
+/**
+ * `fullText` 的老默认值是 true，现在是 false。
+ *
+ * 老用户的 state.json 里存着显式的 true，光改 `defaultSettings` 对他们无效 ——
+ * 但也不能无脑把 true 改成 false：用户可能自己打开过。所以用一个一次性标记
+ * `fullTextMigrated` 区分「从没设置过」和「设置过」：
+ *   - 没有标记 → 说明是本次升级前的老数据，按新默认值关掉，并打上标记；
+ *   - 有标记   → 用户之后的任何选择都尊重，包括又改回 true。
+ */
+function migrateFullText(scan, fallback) {
+  if (scan.fullTextMigrated === true) return asBool(scan.fullText, fallback)
+  return false
 }
 
 /** 把字符串（逗号/分号/换行分隔）或数组统一成去空字符串数组。 */
@@ -288,7 +304,9 @@ function normalize(raw) {
       maxPerTopic: migrateMaxPerTopic(asNumber(scan.maxPerTopic, d.scan.maxPerTopic)),
       summarize: asBool(scan.summarize, d.scan.summarize),
       summaryDepth: normalizeSummaryDepth(scan.summaryDepth),
-      fullText: asBool(scan.fullText, d.scan.fullText),
+      fullText: migrateFullText(scan, d.scan.fullText),
+      // 迁移标记本身也要存下来，否则每一轮读取都会把用户手动打开的开关又关回去
+      fullTextMigrated: true,
       lookbackDays: Math.min(3650, Math.max(1, asNumber(scan.lookbackDays, d.scan.lookbackDays))),
       lastScanAt: typeof scan.lastScanAt === 'string' ? scan.lastScanAt : null,
       lastScanNew: asNumber(scan.lastScanNew, 0),

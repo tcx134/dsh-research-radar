@@ -6,14 +6,17 @@ import test from 'node:test'
 
 import {
   JOURNAL_CACHE_DAYS,
+  JOURNAL_QUARTILES,
   QUALITY_TIERS,
   citationPercentileScore,
   citationScore,
   createJournalCache,
   fetchJournalMetrics,
+  fetchSubfieldThresholds,
   journalScore,
   normalizeIssn,
   paperQuality,
+  quartileFromImpactFactor,
   quartileOf,
   resolveIssnsByDoi,
   resolvePercentilesByDoi,
@@ -278,7 +281,8 @@ test('期刊缓存：命中缓存不重复请求，过期才刷新，查不到�
 
   // 缓存确实落盘了（新建一个 cache 实例能读到）
   const raw = JSON.parse(await fsp.readFile(path.join(dir, 'journals.json'), 'utf8'))
-  assert.equal(raw.version, 1)
+  // version 2 起同一个文件里还存子学科的分位阈值（thresholds）
+  assert.equal(raw.version, 2)
   assert.ok(raw.entries['0263-8231'].fetchedAt)
 
   // asMap 给出可直接喂给 paperQuality 的 Map

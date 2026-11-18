@@ -265,14 +265,17 @@ export async function ensureIssns(items, options = {}) {
 /**
  * 给库里已有的老论文补质量分。
  *
- * 有两种「老论文」都要处理：
+ * 有三种「老论文」都要处理：
  *   1. 完全没有 `quality`（质量分功能上线前入库的）；
  *   2. 有 `quality`，但当时没有 ISSN，只能按被引算 —— 分数是真的，可是漏了
  *      最关键的影响因子信号（实测用户库里 33 篇全是这种：22 篇靠被引打了
- *      medium，11 篇连被引都没有，全被埋在「待评估」里）。
+ *      medium，11 篇连被引都没有，全被埋在「待评估」里）；
+ *   3. 有 `quality`、也有 ISSN，但算分时「期刊分区」这个口径还不存在 ——
+ *      `tier` 是按综合分切的，于是同一本 Q4 刊里的论文会因为被引多、有开放
+ *      获取而混进「高质量」。这正是「好的和不好的都分在一个质量」的来源。
  *
- * 所以这里的判据不是「有没有 quality」，而是「有没有 ISSN」。补到 ISSN 之后
- * 无法定位的会重新算分；本来就完整的不动（幂等）。
+ * 前两种的判据是「有没有 ISSN」；第三种是「有没有 `journalQuartile` 字段」。
+ * 本来就完整的不动（幂等）。
  *
  * @returns {Promise<number>} 补齐（或重算）了多少篇
  */
@@ -289,18 +292,31 @@ export async function backfillQuality(store, options = {}) {
       String(item.doi ?? '') !== '',
   )
   const pending = unscored.concat(rescore)
-  if (pending.length === 0) return 0
+  // 分区口径是后加的：有分数、有 ISSN，但 `journalQuartile` 字段还不存在的那批。
+  // 这批的 ISSN 早补齐了（所以 `pending` 里没有它们），但它们同样要重算档位。
+  const restaleCandidates = items.filter(
+    (item) =>
+      item.quality !== null &&
+      typeof item.quality === 'object' &&
+      normalizeIssn(item.issn ?? '') !== '' &&
+      typeof item.quality.journalQuartile !== 'string',
+  )
+  if (pending.length === 0 && restaleCandidates.length === 0) return 0
 
   // 老论文几乎都没有 ISSN（字段是后加的），不补的话期刊信号永远空着。
-  try {
-    await ensureIssns(pending, { api: state.settings.api, issnResolver: options.issnResolver })
-  } catch {
-    /* 补不到 ISSN 只是少一个信号 */
+  if (pending.length > 0) {
+    try {
+      await ensureIssns(pending, { api: state.settings.api, issnResolver: options.issnResolver })
+    } catch {
+      /* 补不到 ISSN 只是少一个信号 */
+    }
   }
 
   // 只有真拿到 ISSN 的才值得重算一遍（没补到的保持原分，不要无谓地抖动）
   const targets = pending.filter((item) => normalizeIssn(item.issn ?? '') !== '' || unscored.includes(item))
-  const issns = targets.map((item) => item.issn).filter((value) => normalizeIssn(value ?? '') !== '')
+  const issns = [...targets, ...restaleCandidates]
+    .map((item) => item.issn)
+    .filter((value, index, all) => normalizeIssn(value ?? '') !== '' && all.indexOf(value) === index)
 
   let journals = options.journals ?? null
   if (options.journalCache !== undefined && options.journalCache !== null && issns.length > 0) {
@@ -312,13 +328,44 @@ export async function backfillQuality(store, options = {}) {
     }
   }
 
+  // 期刊分区要用「同子学科的 IF 分位阈值」，而子学科是跟着期刊指标一起回来的。
+  // 所以阈值只能在拿到 journals 之后算，并且只对本次真正涉及的子学科算。
+  let thresholds = null
+  if (options.journalCache !== undefined && options.journalCache !== null && journals !== null) {
+    const subfieldIds = []
+    for (const item of [...targets, ...restaleCandidates]) {
+      const key = normalizeIssn(item.issn ?? '')
+      if (key === '') continue
+      const metrics = typeof journals.get === 'function' ? journals.get(key) : journals[key]
+      const subId = metrics !== null && typeof metrics === 'object' ? String(metrics.subfieldId ?? '') : ''
+      if (subId !== '' && !subfieldIds.includes(subId)) subfieldIds.push(subId)
+    }
+    if (subfieldIds.length > 0) {
+      try {
+        await options.journalCache.ensureThresholds(subfieldIds, state.settings.api)
+        thresholds = options.journalCache.thresholds()
+      } catch {
+        /* 阈值拿不到就没有期刊分区，退化成按被引判档 */
+      }
+    }
+  }
+
   const computed = new Map()
   const filledIssn = new Map()
   for (const item of targets) {
     // 没有 ISSN 的有分数条目，保留原分（重算只会得到同一个结果，还多了抖动风险）
     if (item.quality !== null && typeof item.quality === 'object' && normalizeIssn(item.issn ?? '') === '') continue
-    computed.set(item.id, paperQuality(item, { journals }))
+    computed.set(item.id, paperQuality(item, { journals, thresholds }))
     filledIssn.set(item.id, item.issn)
+  }
+  // 阈值拿到手才有意义 —— 拿不到时重算也只会得到「无分区」的同一个结果，
+  // 反而把已有档位抖一遍。
+  const hasThresholds = thresholds !== null && typeof thresholds === 'object' && Object.keys(thresholds).length > 0
+  if (hasThresholds) {
+    for (const item of restaleCandidates) {
+      if (computed.has(item.id)) continue
+      computed.set(item.id, paperQuality(item, { journals, thresholds }))
+    }
   }
   if (computed.size === 0) return 0
 
@@ -383,6 +430,7 @@ export async function backfillPercentiles(store, options = {}) {
 
   const checkedAt = nowIso()
   const journals = options.journals ?? null
+  const thresholds = options.thresholds ?? null
   // id → {percentile, quality}；percentile 为 null 表示这次仍然查不到（只打时间戳）
   const updates = new Map()
   for (const item of pending) {
@@ -400,7 +448,7 @@ export async function backfillPercentiles(store, options = {}) {
     const percentile = Math.max(0, Math.min(100, Math.round(value)))
     updates.set(item.id, {
       percentile,
-      quality: qualityWithPercentile(item, percentile, journals, now),
+      quality: qualityWithPercentile(item, percentile, journals, now, thresholds),
     })
   }
   if (updates.size === 0) return 0
@@ -431,10 +479,10 @@ export async function backfillPercentiles(store, options = {}) {
  *
  * @returns {object|null} 新的 quality；null 表示原本就没有分数
  */
-function qualityWithPercentile(item, percentile, journals, now) {
+function qualityWithPercentile(item, percentile, journals, now, thresholds = null) {
   const existing = item.quality !== null && typeof item.quality === 'object' ? item.quality : null
   if (journals !== null && journals !== undefined) {
-    return paperQuality({ ...item, citationPercentile: percentile }, { journals, now })
+    return paperQuality({ ...item, citationPercentile: percentile }, { journals, thresholds, now })
   }
   if (existing === null) return null
   const quartile = quartileOf(percentile)
@@ -731,6 +779,7 @@ export async function runScan(ctx, config, store, options = {}) {
    * 已经入库的老论文，靠它预热不到本次新抓到的期刊。
    */
   let journals = options.journals ?? null
+  let thresholds = null
   // 有些源（RSS / PubMed / arXiv）不给 ISSN，这些论文查不到影响因子就只能半瞎打分。
   // 先用 DOI 反查补上 —— 反正质量评估前本来就要请求 OpenAlex，这里顺带解决。
   try {
@@ -745,12 +794,23 @@ export async function runScan(ctx, config, store, options = {}) {
         settings.api,
       )
       journals = options.journalCache.asMap()
+      // 期刊分区要跟同子学科比，先拿到这些子学科的四分位阈值再打分
+      const subfieldIds = new Set()
+      for (const item of fresh) {
+        const metrics = journals instanceof Map ? journals.get(String(item.issn ?? '')) : journals?.[String(item.issn ?? '')]
+        const subfieldId = metrics !== null && typeof metrics === 'object' ? String(metrics.subfieldId ?? '') : ''
+        if (subfieldId !== '') subfieldIds.add(subfieldId)
+      }
+      if (subfieldIds.size > 0) {
+        await options.journalCache.ensureThresholds([...subfieldIds], settings.api)
+        thresholds = options.journalCache.thresholds()
+      }
     } catch {
-      /* 指标拿不到就退化成只看被引，不阻断扫描 */
+      /* 指标或阈值拿不到就退化成只看被引，不阻断扫描 */
     }
   }
   for (const item of fresh) {
-    item.quality = paperQuality(item, { journals })
+    item.quality = paperQuality(item, { journals, thresholds })
   }
   result.qualityTiers = { high: 0, medium: 0, low: 0, unknown: 0 }
   for (const item of fresh) {

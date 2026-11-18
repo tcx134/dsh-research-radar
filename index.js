@@ -1,6 +1,6 @@
 import { createStore } from './radar/store.js'
 import { runScan, buildDigest, resolvePanelUrl, effectiveLookbackDays, retryFailedSummaries, backfillPercentiles } from './radar/scan.js'
-import { createJournalCache, QUALITY_TIERS, paperQuality } from './radar/quality.js'
+import { createJournalCache, QUALITY_TIERS, JOURNAL_QUARTILES, paperQuality } from './radar/quality.js'
 import { sendMail, textToHtml, digestToHtml } from './radar/mail.js'
 import { SOURCE_LABELS, collectFromSource, shouldSpread } from './radar/sources.js'
 import { Config, validateConfig } from './radar/config.js'
@@ -110,6 +110,12 @@ const MAX_ITEM_LIMIT = 500
 const ITEM_FILTERS = new Set(['all', 'unread', 'starred', 'high', 'fulltext'])
 
 /**
+ * 期刊分区的四个档。面板上可以多选（像 EasyScholar 那样勾几个分区只看那几个），
+ * 也可以一个都不勾 = 不限。
+ */
+const ITEM_QUARTILES = new Set(['Q1', 'Q2', 'Q3', 'Q4'])
+
+/**
  * 排序方式：
  *   - `recent`：按发现时间倒序（默认，适合「每天看新到的」）；
  *   - `quality`：按质量分倒序，同分再按发现时间（适合「这周该读哪几篇」）。
@@ -126,12 +132,31 @@ function clampInt(value, fallback, min, max) {
 }
 
 /**
+ * 解析 `quartiles` 查询参数。
+ *
+ * 用法与 EasyScholar 一致：勾选想看的分区，可以多选（`quartiles=Q1,Q2`），
+ * 一个都不给 = 不限。非法值直接忽略，避免 `quartiles=abc` 把列表清空。
+ *
+ * @param {string|string[]|null|undefined} value
+ * @returns {Set<string>} 空集合表示「不限」
+ */
+export function parseQuartiles(value) {
+  const raw = Array.isArray(value) ? value.join(',') : String(value ?? '')
+  const out = new Set()
+  for (const piece of raw.split(',')) {
+    const token = piece.trim().toUpperCase()
+    if (ITEM_QUARTILES.has(token)) out.add(token)
+  }
+  return out
+}
+
+/**
  * 按筛选条件从全部条目里切出一页。
  *
  * 分页与筛选放在服务端做（而不是像以前那样 `slice(0, 200)` 后让前端全量
  * 过滤），这样论文攒到几千条时面板也不会卡。
  * @param {object[]} all 全部条目（按 discoveredAt 倒序）
- * @param {{ limit?: string|number, offset?: string|number, topicId?: string, filter?: string }} query
+ * @param {{ limit?: string|number, offset?: string|number, topicId?: string, filter?: string, sort?: string, quartiles?: string|string[] }} query
  * @returns {{ items: object[], total: number, offset: number, limit: number, hasMore: boolean }}
  */
 export function paginateItems(all, query = {}) {
@@ -139,12 +164,19 @@ export function paginateItems(all, query = {}) {
   const topicId = String(query.topicId ?? '')
   const filter = ITEM_FILTERS.has(String(query.filter ?? '')) ? String(query.filter) : 'all'
   const sort = ITEM_SORTS.has(String(query.sort ?? '')) ? String(query.sort) : 'recent'
+  // 分区多选：空集合 = 不限，有值就只留命中的（没有分区的论文在勾了分区时不显示，
+  // 因为用户明确只想看某几档）
+  const quartiles = parseQuartiles(query.quartiles)
   let filtered = source.filter((item) => {
     if (item === null || typeof item !== 'object') return false
     if (topicId !== '' && item.topicId !== topicId) return false
+    if (quartiles.size > 0) {
+      const quartile = item.quality?.journalQuartile
+      if (typeof quartile !== 'string' || !quartiles.has(quartile)) return false
+    }
     if (filter === 'unread') return item.read !== true
     if (filter === 'starred') return item.starred === true
-    // 「值得读」= 高质量（顶刊 / 高被引 / 开放获取）
+    // 「值得读」= 高质量（Q1 刊 / 高被引 / 开放获取）
     if (filter === 'high') return item.quality?.tier === 'high'
     // 「有全文」= 摘要是基于全文写的（不是只喂了摘要）
     if (filter === 'fulltext') return item.summary?.basis === 'fulltext'
@@ -196,10 +228,21 @@ export function apply(ctx, config) {
    * 这里用**磁盘上已有的**期刊指标现算一个兜底值（只读、不发网络请求、不写 state）：
    * 老论文的期刊绝大部分在前几轮扫描里已经缓存过，够用；真缺指标的也会在下一次
    * `runScan` 的 `backfillQuality` 里补上并落盘。
+   *
+   * 期刊分区（`journalQuartile`）同理：它是比质量分更晚加的字段，库里已有的
+   * `quality` 对象里根本没有这个键。只看「quality 存不存在」会让这批老论文
+   * 永远没有分区徽章，所以这里也把「缺 journalQuartile」当成需要重算。
    */
-  function qualityOf(item, journals) {
-    if (item.quality !== null && typeof item.quality === 'object') return item.quality
-    return paperQuality(item, { journals })
+  function qualityOf(item, journals, thresholds) {
+    const stored = item.quality
+    const hasStored = stored !== null && typeof stored === 'object'
+    // 已经有分区字段（哪怕值是 null）就信它：说明这份分数是按新口径算过的
+    if (hasStored && stored.journalQuartile !== undefined) return stored
+    const fresh = paperQuality(item, { journals, thresholds })
+    // 现算用的是磁盘缓存，缓存里没这本刊（或还没算阈值）时算不出分区，
+    // 这时候别用它覆盖已经存在的分数 —— 会把一篇「高分老论文」降成「无证据 0 分」。
+    if (fresh.journalQuartile === null && hasStored) return stored
+    return fresh
   }
 
   /**
@@ -215,8 +258,9 @@ export function apply(ctx, config) {
       /* 缓存读不到就退化成只看被引 */
     }
     const journals = journalCache.asMap()
+    const thresholds = journalCache.thresholds()
     const withQuality = state.items.map((item) => {
-      const quality = qualityOf(item, journals)
+      const quality = qualityOf(item, journals, thresholds)
       return quality === item.quality ? item : { ...item, quality }
     })
     const page = paginateItems(withQuality, query)
@@ -237,11 +281,22 @@ export function apply(ctx, config) {
         // 高质量论文数 —— 面板顶部直接显示「这周有 N 篇值得读」
         highQuality: withQuality.filter((i) => i.quality?.tier === 'high').length,
         fullText: state.items.filter((i) => i.summary?.basis === 'fulltext').length,
+        // 每个期刊分区有多少篇，面板上直接标在勾选项旁边（像 EasyScholar 那样
+        // 让人一眼看到「Q1 只有 3 篇，Q3 有 20 篇」）
+        quartiles: {
+          Q1: withQuality.filter((i) => i.quality?.journalQuartile === 'Q1').length,
+          Q2: withQuality.filter((i) => i.quality?.journalQuartile === 'Q2').length,
+          Q3: withQuality.filter((i) => i.quality?.journalQuartile === 'Q3').length,
+          Q4: withQuality.filter((i) => i.quality?.journalQuartile === 'Q4').length,
+          none: withQuality.filter((i) => typeof i.quality?.journalQuartile !== 'string').length,
+        },
       },
       settings: { ...state.settings, mail: maskMailSettings(state.settings.mail) },
       sources: SOURCE_LABELS,
       // 质量档位（面板的筛选与徽章用）
       qualityTiers: QUALITY_TIERS,
+      // 期刊分区可选档位（面板渲染成多选框）
+      journalQuartiles: JOURNAL_QUARTILES,
       // 解析深度可选档位（面板设置页直接渲染成选择器，带每档的预算说明）
       summaryDepths: summaryDepthOptions(),
       status: {
@@ -332,6 +387,7 @@ export function apply(ctx, config) {
                 topicId: url.searchParams.get('topicId') ?? '',
                 filter: url.searchParams.get('filter') ?? '',
                 sort: url.searchParams.get('sort') ?? '',
+                quartiles: url.searchParams.get('quartiles') ?? '',
               }),
             )
             return
@@ -646,22 +702,41 @@ export function apply(ctx, config) {
             // 有了它才算得出期刊分，缺它就只能按被引重算，会把「顶刊 + 刚从没查过
             // 百分位」的论文从 high 打成 medium。
             let journals = null
+            let thresholds = null
             try {
               await journalCache.load()
               journals = journalCache.asMap()
+              // 没有子学科阈值就算不出期刊分区（新签名里的 journalQuartile），
+              // 只能用论文级被引百分位判 Q1–Q4，新论文一律没有分区。
+              const subfieldIds = new Set()
+              const entries = journals instanceof Map ? [...journals.values()] : Object.values(journals || {})
+              for (const metrics of entries) {
+                if (metrics === null || typeof metrics !== 'object') continue
+                const subfieldId = String(metrics.subfieldId ?? '')
+                if (subfieldId !== '') subfieldIds.add(subfieldId)
+              }
+              if (subfieldIds.size > 0) {
+                await journalCache.ensureThresholds([...subfieldIds], state.settings.api)
+                thresholds = journalCache.thresholds()
+              }
             } catch {
               journals = null
+              thresholds = null
             }
             const filled = await backfillPercentiles(store, {
               api: state.settings.api,
               journals,
+              thresholds,
               refreshDays: Number.isFinite(Number(body.refreshDays)) ? Number(body.refreshDays) : undefined,
               // 手动点击时允许强制全查一遍（排查用），默认走 30 天窗口
               now: body.force === true ? Date.now() : undefined,
             })
             const after = await store.load()
             const withQuartile = after.items.filter(
-              (item) => item?.quality !== null && typeof item?.quality === 'object' && item.quality.quartile !== null,
+              (item) =>
+                item?.quality !== null &&
+                typeof item?.quality === 'object' &&
+                (item.quality.journalQuartile ?? item.quality.quartile ?? null) !== null,
             ).length
             sendJson(res, 200, {
               ok: true,

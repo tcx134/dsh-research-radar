@@ -77,8 +77,9 @@ test('defaultSettings 的 scan 默认值没被改坏', () => {
   assert.equal(d.scan.lookbackDays, 30)
   assert.equal(d.scan.summarize, true)
   assert.equal(d.scan.summaryDepth, 'standard')
-  // 抓全文再总结默认开：这是摘要质量的主要来源
-  assert.equal(d.scan.fullText, true)
+  // 抓全文再总结默认关：摘要在多数情况下够判断「值不值得读」，而抓 PDF 要过
+  // 出版社反爬、命中率只有三成左右，每篇还要多花几秒到几十秒
+  assert.equal(d.scan.fullText, false)
   assert.equal(d.mail.enabled, false)
   assert.equal(d.mail.port, 465)
   assert.deepEqual(d.rss, [])

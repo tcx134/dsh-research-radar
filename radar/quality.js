@@ -27,6 +27,24 @@ const ISSN_BATCH = 50
 /** 质量档位，从高到低。`unknown` 表示期刊指标没查到。 */
 export const QUALITY_TIERS = ['high', 'medium', 'low', 'unknown']
 
+/** 期刊分区的四个档，从高到低。 */
+export const JOURNAL_QUARTILES = ['Q1', 'Q2', 'Q3', 'Q4']
+
+/**
+ * 期刊分区 → 质量档位。
+ *
+ * 有期刊分区时档位直接由分区决定（Q1→high、Q2→medium、Q3/Q4→low），
+ * 不再看那个综合分：综合分里掺了被引和 OA，会让同一本 Q4 刊里的论文
+ * 因为「刚发表所以没被引」和「顶刊所以分数高」混成一片 —— 正是用户说的
+ * 「好的和不好的都分在一个质量」。
+ */
+const JOURNAL_QUARTILE_TIER = {
+  Q1: 'high',
+  Q2: 'medium',
+  Q3: 'low',
+  Q4: 'low',
+}
+
 /**
  * 缺被引信号时给的中性分（0–100）。
  *
@@ -116,6 +134,42 @@ export function quartileOf(percentile) {
 }
 
 /**
+ * 期刊分区：把影响因子放到「同子学科里排第几」来判 Q1–Q4。
+ *
+ * 为什么需要它：`quartileOf` 用的是**论文级**被引百分位，新论文被引还是 0、
+ * 算不出百分位，于是一整批刚发表的好论文全都「没有分区」。而用户要的是
+ * EasyScholar 那种「这本刊在它所在学科里排前百分之几」—— 那是**期刊级**信号，
+ * 跟论文多新没关系。
+ *
+ * 判定用的是子学科内部的影响因子排名：按 IF 从高到低排，前 25% 是 Q1、25–50%
+ * 是 Q2、50–75% 是 Q3、其余 Q4。阈值（`q1`/`q2`/`q3`）由
+ * `fetchSubfieldThresholds` 取该子学科第 25%/50%/75% 名期刊的 IF 得到。
+ *
+ * 实测（OpenAlex 核心期刊，2026-11）：MSSP 的 IF 11.24 在
+ * Civil and Structural Engineering 里排 54/1704，前 3.2% → Q1；
+ * IF 3.7 排 34.5% → Q2；IF 1.5 排 70% → Q3；IF 0.8 排 85.6% → Q4。
+ *
+ * @param {number|null} impactFactor
+ * @param {{q1?:number|null, q2?:number|null, q3?:number|null}|null} thresholds
+ * @returns {string|null} Q1–Q4，没有 IF 或没有阈值时返回 null（不是 Q4）
+ */
+export function quartileFromImpactFactor(impactFactor, thresholds) {
+  const value = finiteNumber(impactFactor)
+  if (value === null) return null
+  if (thresholds === null || typeof thresholds !== 'object') return null
+  const q1 = finiteNumber(thresholds.q1)
+  const q2 = finiteNumber(thresholds.q2)
+  const q3 = finiteNumber(thresholds.q3)
+  // 三个阈值缺任何一个都判不了 —— 硬凑会让分区失去可比性
+  if (q1 === null || q2 === null || q3 === null) return null
+  if (value >= q1) return 'Q1'
+  if (value >= q2) return 'Q2'
+  if (value >= q3) return 'Q3'
+  return 'Q4'
+}
+
+
+/**
  * 被引百分位换算成分数（0–100）。有百分位就用它，没有才退回年化被引。
  *
  * **为什么优先百分位**：工程类论文被引 10 次可能已是领域前 5%，生物类被引 10 次
@@ -150,9 +204,10 @@ export function citationScore(citations, publishedAt, now = Date.now()) {
  * 综合质量评估。
  *
  * @param {object} item 论文（需要 venue / issn / citations / publishedAt / openAccess）
- * @param {{ journals?: Map<string, object>|Record<string, object>, now?: number }} [options]
- *   `journals` 是 ISSN → 指标 的查找表（由 createJournalCache 提供）
- * @returns {{ score:number, tier:string, reasons:string[], impactFactor:number|null, journalHIndex:number|null }}
+ * @param {{ journals?: Map<string, object>|Record<string, object>, thresholds?: Record<string, object>|null, now?: number }} [options]
+ *   `journals` 是 ISSN → 指标 的查找表（由 createJournalCache 提供）；
+ *   `thresholds` 是子学科 → IF 分位阈值（由 fetchSubfieldThresholds 提供）
+ * @returns {{ score:number, tier:string, reasons:string[], impactFactor:number|null, journalHIndex:number|null, journalQuartile:string|null, subfieldId:string }}
  */
 export function paperQuality(item, options = {}) {
   const now = finiteNumber(options.now) ?? Date.now()
@@ -169,6 +224,14 @@ export function paperQuality(item, options = {}) {
   // `Number.isFinite(0)` 是 true —— 于是「没有这项数据」被写成「影响因子 0.0」。
   const impactFactor = metrics !== null ? finiteNumber(metrics.twoYearMeanCitedness) : null
   const journalHIndex = metrics !== null ? finiteNumber(metrics.hIndex) : null
+
+  // 期刊分区：这本刊在同子学科里的 IF 排名落在哪一档。跟论文多新无关，
+  // 所以刚发表、还没被引的论文也能有分区 —— 这正是「按刊分区」要解决的问题。
+  const subfieldId = metrics !== null ? String(metrics.subfieldId ?? '') : ''
+  const thresholds = options.thresholds ?? null
+  const subfieldThresholds =
+    thresholds !== null && subfieldId !== '' && typeof thresholds === 'object' ? (thresholds[subfieldId] ?? null) : null
+  const journalQuartile = quartileFromImpactFactor(impactFactor, subfieldThresholds)
 
   const jScore = journalScore(metrics)
   const percentile = item?.citationPercentile
@@ -205,7 +268,10 @@ export function paperQuality(item, options = {}) {
 
   const cites = Number(item?.citations)
   const quartile = quartileOf(percentile)
-  if (quartile !== null) {
+  if (journalQuartile !== null) {
+    const name = metrics !== null ? String(metrics.name ?? '') : ''
+    reasons.push(`${journalQuartile}（本学期刊分区${name === '' ? '' : `：${name}`}）`)
+  } else if (quartile !== null) {
     reasons.push(`${quartile}（被引前 ${Math.max(1, 100 - Math.round(percentile))}%）`)
   }
   if (Number.isFinite(cites) && cites > 0) reasons.push(`被引 ${cites} 次`)
@@ -223,7 +289,12 @@ export function paperQuality(item, options = {}) {
   // 注意用 cScore === null 而不是 === 0：百分位 0 是「算出来了，排最后」，
   // 那是有效信号，应该判 low 而不是 unknown。
   if (metrics === null && jScore === 0 && cScore === null) tier = 'unknown'
-  else if (score >= 60) tier = 'high'
+  else if (journalQuartile !== null) {
+    // 有期刊分区就以分区定档 —— 这是用户要求的「按刊分区」口径：
+    // 同一档里的论文质量才是可比的，而不是把顶刊综述和灌水论文混在一个「中等」里。
+    // 分数仍保留（同档内按分数排序），只是不再由它决定档位。
+    tier = JOURNAL_QUARTILE_TIER[journalQuartile] ?? 'medium'
+  } else if (score >= 60) tier = 'high'
   else if (score >= 35) tier = 'medium'
   else tier = 'low'
 
@@ -240,6 +311,8 @@ export function paperQuality(item, options = {}) {
     journalHIndex,
     citationPercentile: percentileScore === null ? null : Number(percentile),
     quartile,
+    journalQuartile,
+    subfieldId,
   }
 }
 
@@ -264,7 +337,7 @@ export async function fetchJournalMetrics(issns, api) {
     const url =
       'https://api.openalex.org/sources?filter=' +
       encodeURIComponent(filter) +
-      '&select=id,display_name,issn_l,summary_stats,works_count,is_core,is_in_doaj,type&per-page=50' +
+      '&select=id,display_name,issn_l,summary_stats,works_count,is_core,is_in_doaj,type,topics&per-page=50' +
       mailtoParam(api)
     let payload
     try {
@@ -276,6 +349,9 @@ export async function fetchJournalMetrics(issns, api) {
       const key = normalizeIssn(source?.issn_l ?? '')
       if (key === '' || !chunk.includes(key)) continue
       const stats = source?.summary_stats !== null && typeof source?.summary_stats === 'object' ? source.summary_stats : {}
+      // 主学科：分区要跟「同子学科的其它期刊」比，所以必须记住这本刊属于哪个子学科。
+      // topics[0].subfield 是 OpenAlex 最细的学科层级（如 2210 Mechanical Engineering）。
+      const primaryTopic = Array.isArray(source?.topics) ? source.topics[0] : null
       out[key] = {
         name: String(source?.display_name ?? ''),
         twoYearMeanCitedness: finiteNumber(stats['2yr_mean_citedness']),
@@ -285,8 +361,83 @@ export async function fetchJournalMetrics(issns, api) {
         isCore: source?.is_core === true,
         isInDoaj: source?.is_in_doaj === true,
         type: String(source?.type ?? ''),
+        subfieldId: String(primaryTopic?.subfield?.id ?? '').split('/').pop(),
+        subfieldName: String(primaryTopic?.subfield?.display_name ?? ''),
       }
     }
+  }
+  return out
+}
+
+/**
+ * 取某个子学科的「影响因子分位阈值」：第 25%/50%/75% 名的 IF 各是多少。
+ *
+ * 有了这三个数就能在本地判断一本刊是 Q1–Q4，不用每次按 IF 现查排名：
+ * 一个子学科只要 4 次请求（一次总数 + 三次阈值），结果可以缓存 30 天。
+ *
+ * 分母只算**有影响因子**的核心期刊：OpenAlex 里大量会议录、丛书、机构库
+ * 也挂在子学科下且 `2yr_mean_citedness` 是 null，把它们算进分母会让
+ * 「本刊排第几」严重失真（实测不筛 IF 时 75% 分位对应的 IF 是 0）。
+ *
+ * 实测（2026-11）：Mechanical Engineering 有 IF 的核心期刊 2373 本，
+ * 阈值 IF ≈ {q1: 4.77, q2: 2.51, q3: 1.29}；Civil and Structural Engineering
+ * 1704 本，{q1: 4.71, q2: 2.56, q3: 1.25}。
+ *
+ * @param {string[]} subfieldIds 形如 ['2210', '2205']
+ * @param {{mailto?: string}} [api]
+ * @returns {Promise<Record<string, {q1:number|null,q2:number|null,q3:number|null,total:number}>>}
+ */
+export async function fetchSubfieldThresholds(subfieldIds, api) {
+  const unique = []
+  const seen = new Set()
+  for (const value of Array.isArray(subfieldIds) ? subfieldIds : []) {
+    const id = String(value ?? '').trim()
+    if (id === '' || seen.has(id)) continue
+    seen.add(id)
+    unique.push(id)
+  }
+
+  const out = {}
+  for (const subId of unique) {
+    const base = `type:journal,is_core:true,topics.subfield.id:${subId},summary_stats.2yr_mean_citedness:>0`
+    let total = null
+    try {
+      const url =
+        'https://api.openalex.org/sources?filter=' +
+        encodeURIComponent(base) +
+        '&per-page=1&select=id' +
+        mailtoParam(api)
+      const payload = JSON.parse(await getText(url))
+      const count = finiteNumber(payload?.meta?.count)
+      if (count !== null && count > 0) total = count
+    } catch {
+      continue
+    }
+    if (total === null) continue
+
+    const thresholds = { q1: null, q2: null, q3: null, total }
+    // 第 25%/50%/75% 名期刊的影响因子。用 sort + page 直接定位那一本，
+    // 比取回全部期刊再本地排序省太多请求（1704 本要 18 页）。
+    for (const [key, percent] of [
+      ['q1', 25],
+      ['q2', 50],
+      ['q3', 75],
+    ]) {
+      const rank = Math.max(1, Math.round((total * percent) / 100))
+      try {
+        const url =
+          'https://api.openalex.org/sources?filter=' +
+          encodeURIComponent(base) +
+          `&sort=summary_stats.2yr_mean_citedness:desc&per-page=1&page=${rank}&select=summary_stats` +
+          mailtoParam(api)
+        const payload = JSON.parse(await getText(url))
+        const row = Array.isArray(payload?.results) ? payload.results[0] : null
+        thresholds[key] = finiteNumber(row?.summary_stats?.['2yr_mean_citedness'])
+      } catch {
+        /* 单个阈值拿不到就留 null，该子学科的分区判不出来，不影响其它子学科 */
+      }
+    }
+    out[subId] = thresholds
   }
   return out
 }
@@ -427,10 +578,14 @@ export async function resolvePercentilesByDoi(dois, api) {
 /**
  * 期刊指标磁盘缓存。指标变化很慢（一个月一次足够），没必要每轮扫描都请求。
  * 文件放在 dataDir 下，跟 state.json 同级。
+ *
+ * 同一个文件里还存「子学科的 IF 分位阈值」：判分区要用它，而它跟期刊指标
+ * 一样一个月才变一次，没必要每轮重算。
  */
 export function createJournalCache({ dir }) {
   const file = path.join(dir, 'journals.json')
   let entries = {}
+  let thresholds = {}
   let loaded = false
 
   async function load() {
@@ -438,8 +593,9 @@ export function createJournalCache({ dir }) {
     loaded = true
     try {
       const raw = JSON.parse(await fsp.readFile(file, 'utf8'))
-      if (raw !== null && typeof raw === 'object' && raw.entries !== null && typeof raw.entries === 'object') {
-        entries = raw.entries
+      if (raw !== null && typeof raw === 'object') {
+        if (raw.entries !== null && typeof raw.entries === 'object') entries = raw.entries
+        if (raw.thresholds !== null && typeof raw.thresholds === 'object') thresholds = raw.thresholds
       }
     } catch {
       /* 缓存不存在或坏了都当空缓存，下次扫描重建 */
@@ -451,7 +607,7 @@ export function createJournalCache({ dir }) {
     try {
       await fsp.mkdir(dir, { recursive: true })
       const tmp = `${file}.${process.pid}.tmp`
-      await fsp.writeFile(tmp, JSON.stringify({ version: 1, entries }, null, 2), 'utf8')
+      await fsp.writeFile(tmp, JSON.stringify({ version: 2, entries, thresholds }, null, 2), 'utf8')
       await fsp.rename(tmp, file)
     } catch {
       /* 写缓存失败不影响主流程 */
@@ -463,6 +619,20 @@ export function createJournalCache({ dir }) {
     const fetchedAt = Date.parse(String(entry.fetchedAt ?? ''))
     if (!Number.isFinite(fetchedAt)) return false
     return now - fetchedAt < JOURNAL_CACHE_DAYS * 86400000
+  }
+
+  /**
+   * 缓存项缺 `subfieldId` 时也算过期。
+   *
+   * 真实场景：升级前写下的缓存里根本没有这个字段（实测用户库 28 本刊全是这样），
+   * 而它们的时间戳还在 30 天窗口内 —— 只按时间判新鲜的话永远不会重抓，
+   * 于是「期刊分区」这条路静默失效，用户看到的还是旧的按综合分切的档位。
+   * `missing: true` 的那批是 OpenAlex 里查不到的刊，没有子学科可补，不重抓。
+   */
+  function needsSubfield(entry) {
+    if (entry === null || typeof entry !== 'object') return false
+    if (entry.missing === true) return false
+    return typeof entry.subfieldId !== 'string'
   }
 
   return {
@@ -484,6 +654,10 @@ export function createJournalCache({ dir }) {
       }
       return map
     },
+    /** 子学科 → IF 分位阈值的普通对象，喂给 paperQuality 的 `thresholds`。 */
+    thresholds() {
+      return thresholds
+    },
     /**
      * 确保这些 ISSN 都有新鲜指标：先读缓存，缺的或过期的批量拉一次。
      * 返回本次实际请求的期刊数（0 表示全部命中缓存）。
@@ -494,7 +668,10 @@ export function createJournalCache({ dir }) {
       for (const value of Array.isArray(issns) ? issns : []) {
         const issn = normalizeIssn(value)
         if (issn === '') continue
-        if (!isFresh(entries[issn], now)) stale.push(issn)
+        const entry = entries[issn]
+        if (!isFresh(entry, now) || needsSubfield(entry)) {
+          if (!stale.includes(issn)) stale.push(issn)
+        }
       }
       if (stale.length === 0) return 0
       const fetched = await fetchJournalMetrics(stale, api)
@@ -507,6 +684,33 @@ export function createJournalCache({ dir }) {
           // 查不到也记一笔，避免每次扫描都重试同一批冷门期刊
           entries[issn] = { name: '', twoYearMeanCitedness: null, hIndex: null, fetchedAt, missing: true }
         }
+      }
+      await save()
+      return stale.length
+    },
+    /**
+     * 确保这些子学科都有新鲜的分位阈值。
+     *
+     * 每个子学科要 4 次请求（总数 + 三个分位），一个方向通常只涉及两三个
+     * 子学科，所以开销很小；而且算出来就缓存 30 天。
+     *
+     * @returns {Promise<number>} 本次实际请求的子学科数
+     */
+    async ensureThresholds(subfieldIds, api, now = Date.now()) {
+      await load()
+      const stale = []
+      for (const value of Array.isArray(subfieldIds) ? subfieldIds : []) {
+        const id = String(value ?? '').trim()
+        if (id === '' || stale.includes(id)) continue
+        if (!isFresh(thresholds[id], now)) stale.push(id)
+      }
+      if (stale.length === 0) return 0
+      const fetched = await fetchSubfieldThresholds(stale, api)
+      const fetchedAt = new Date(now).toISOString()
+      for (const id of stale) {
+        const row = fetched[id]
+        // 拿不到阈值就留空，不能填 0 —— 0 会让所有刊都判成 Q1
+        if (row !== undefined && finiteNumber(row.q1) !== null) thresholds[id] = { ...row, fetchedAt }
       }
       await save()
       return stale.length

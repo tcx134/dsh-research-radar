@@ -79,8 +79,8 @@ window.__ModuleLoader__.load({
         depth_deep: '深度',
         depth_hint: '精简 = 一句话 + 创新点 + 标签，token 最省；标准 = 七字段（无局限）；深度 = 八字段含局限。只影响新扫描的论文，已有摘要不变。',
         depth_cost: '每篇约',
-        do_fulltext: '能拿到全文时按全文总结（更准，但慢一些）',
-        fulltext_hint: '会依次尝试 arXiv、Europe PMC、开放获取 PDF、出版社 PDF。拿不到全文的论文自动回退摘要，不会报错。关掉能明显加快扫描。',
+        do_fulltext: '扫描时顺便抓全文再总结（默认关）',
+        fulltext_hint: '关着时只用摘要生成结构化摘要 —— 多数情况下摘要足够判断值不值得读，而且快得多。打开后会依次尝试 arXiv、Europe PMC、开放获取 PDF、出版社 PDF，每篇多花几秒到几十秒，且约七成论文拿不到全文（会自动回退摘要，不报错）。想读全文时点卡片上的「精读」让 Agent 现抓更划算。',
         api_settings: '检索接口',
         api_mailto: '联系邮箱（OpenAlex / Crossref 推荐填写，可提高配额）',
         api_openalex_key: 'OpenAlex API Key（可选，留空用公共配额）',
@@ -175,6 +175,13 @@ window.__ModuleLoader__.load({
         quality_title: '综合期刊影响因子、被引与开放获取算出的质量分',
         quality_why: '依据',
         quartile_title: '分区：按这篇论文在同年同领域里的被引排位算（前 25% 为 Q1）',
+        journal_quartile_title: '期刊分区：按这本刊在同子学科里的影响因子排位算（前 25% 为 Q1），新论文也有',
+        quartile_filter: '分区',
+        quartile_any: '不限分区',
+        quartile_none_option: '无分区',
+        quartile_filter_hint: '只显示所选分区的论文；全不选 = 不限。分区按期刊在同子学科里的影响因子排位算，和期刊多有名无关。',
+        quartile_filter_empty: '所选分区下没有论文',
+        journal_quartile_reason: '期刊分区',
         impact_factor: '影响因子',
         read_fulltext: '已读全文',
         read_abstract: '仅摘要',
@@ -324,8 +331,8 @@ window.__ModuleLoader__.load({
         depth_deep: 'Deep',
         depth_hint: 'Brief = TL;DR + novelty + tags (cheapest); Standard = seven fields (no limitations); Deep = all eight fields incl. limitations. Applies to new scans only.',
         depth_cost: 'per paper ~',
-        do_fulltext: 'Read the full text when available (more accurate, slower)',
-        fulltext_hint: 'Tries arXiv, Europe PMC, open-access PDFs, then the publisher PDF. Papers without an accessible full text fall back to the abstract — that is not an error. Turning this off makes scans noticeably faster.',
+        do_fulltext: 'Fetch the full text before summarizing (off by default)',
+        fulltext_hint: 'When off, summaries are built from the abstract alone — usually enough to judge whether a paper is worth reading, and much faster. When on, it tries arXiv, Europe PMC, open-access PDFs, then the publisher PDF: a few extra seconds to tens of seconds per paper, and roughly seven in ten papers have no accessible full text (they fall back to the abstract, which is not an error). For a deep read, the 「Deep read」 button on a card is a better trade.',
         api_settings: 'Query APIs',
         api_mailto: 'Contact email (recommended for OpenAlex / Crossref quotas)',
         api_openalex_key: 'OpenAlex API key (optional)',
@@ -420,6 +427,13 @@ window.__ModuleLoader__.load({
         quality_title: 'Quality score from journal impact, citations and open access',
         quality_why: 'Why',
         quartile_title: 'Quartile by citation percentile within the same field and year (top 25% = Q1)',
+        journal_quartile_title: 'Journal quartile by impact factor within its subfield (top 25% = Q1); works for new papers too',
+        quartile_filter: 'Quartile',
+        quartile_any: 'Any quartile',
+        quartile_none_option: 'No quartile',
+        quartile_filter_hint: 'Show only the selected quartiles; none selected = all. Quartiles rank journals by impact factor inside their own subfield.',
+        quartile_filter_empty: 'No papers in the selected quartiles',
+        journal_quartile_reason: 'Journal quartile',
         impact_factor: 'Impact factor',
         read_fulltext: 'Full text',
         read_abstract: 'Abstract only',
@@ -616,6 +630,13 @@ window.__ModuleLoader__.load({
 .drr-quartile-q1{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43);border-color:transparent}
 .drr-quartile-q2{background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.18));color:var(--dsw-alias-label-primary,#e6e6e6);border-color:transparent}
 .drr-quartile-q3,.drr-quartile-q4{background:transparent;color:var(--dsw-alias-label-tertiary,#7d7d7d)}
+/* 分区筛选条：勾选多选，选中态用各档自己的颜色，一眼能对上卡片上的徽章 */
+.drr-quartile-bar{align-items:center}
+.drr-seg-check button{min-width:52px;text-align:center}
+.drr-qbtn-q1.drr-seg-on{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43)}
+.drr-qbtn-q2.drr-seg-on{background:var(--dsw-alias-state-info-tertiary,#e8f0fb);color:var(--dsw-alias-state-info-primary,#1a5fb4)}
+.drr-qbtn-q3.drr-seg-on{background:var(--dsw-alias-state-warn-tertiary,#fdf3e2);color:var(--dsw-alias-state-warn-primary,#8a5a00)}
+.drr-qbtn-q4.drr-seg-on{background:var(--dsw-alias-interactive-bg-active,rgba(128,128,128,.18));color:var(--dsw-alias-label-secondary,#9a9a9a)}
 .drr-chip-if{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43);font-weight:600}
 .drr-chip-full{background:var(--dsw-alias-state-success-tertiary,#e8f6ed);color:var(--dsw-alias-state-success-primary,#1a7f43);font-weight:600}
 .drr-chip-abs{opacity:.65}
@@ -836,8 +857,16 @@ window.__ModuleLoader__.load({
       // unknown 档的 score 是中性先验算出来的（50 分），不是真实评价。
       // 直接显示「待评估 · 50」会让人以为这篇是中等质量，所以这种情况下不露数字。
       const showScore = roundedScore !== null && badge.cls !== 'drr-q-unknown'
-      // 分区（Q1–Q4）来自「同年同领域被引百分位」，是用户明确要看的东西
-      const quartile = quality !== null && typeof quality.quartile === 'string' ? quality.quartile : null
+      // 分区（Q1–Q4）优先用「期刊分区」：按这本刊在同子学科里的影响因子排位算，
+      // 跟论文多新无关，新发表的论文也有分区（被引百分位要等别人引用才有）。
+      // 拿不到期刊分区时，退回按论文被引百分位算的旧分区。
+      const journalQuartile =
+        quality !== null && typeof quality.journalQuartile === 'string' && quality.journalQuartile !== ''
+          ? quality.journalQuartile
+          : null
+      const paperQuartile = quality !== null && typeof quality.quartile === 'string' ? quality.quartile : null
+      const quartile = journalQuartile !== null ? journalQuartile : paperQuartile
+      const quartileTitle = journalQuartile !== null ? t('journal_quartile_title') : t('quartile_title')
       // 摘要基于全文还是仅摘要 —— 直接决定用户该不该相信「局限」「方法」这些字段
       const basis = s !== null && s.basis === 'fulltext' ? 'fulltext' : 'abstract'
       // 细节默认收起：一张卡片先给「标题 + 一句话结论 + 质量」，想看再展开。
@@ -905,7 +934,7 @@ window.__ModuleLoader__.load({
         quartile !== null
           ? h(
               'span',
-              { className: `drr-chip drr-chip-quartile drr-quartile-${quartile.toLowerCase()}`, title: t('quartile_title') },
+              { className: `drr-chip drr-chip-quartile drr-quartile-${quartile.toLowerCase()}`, title: quartileTitle },
               quartile,
             )
           : null,
@@ -1682,6 +1711,9 @@ window.__ModuleLoader__.load({
       const [topicFilter, setTopicFilter] = React.useState('')
       const [itemFilter, setItemFilter] = React.useState('all')
       const [itemSort, setItemSort] = React.useState('recent')
+      // 期刊分区多选：空数组 = 不限。像 EasyScholar 那样让用户自己挑要看哪几档，
+      // 而不是所有人共用同一个「高分优先」的口味。
+      const [quartileFilter, setQuartileFilter] = React.useState([])
       const [items, setItems] = React.useState([])
       const [page, setPage] = React.useState({ total: 0, offset: 0, limit: PAGE_SIZE, hasMore: false })
       const [counts, setCounts] = React.useState({ all: 0, unread: 0, starred: 0, highQuality: 0, fullText: 0 })
@@ -1726,6 +1758,7 @@ window.__ModuleLoader__.load({
         if (topicFilter !== '') params.set('topicId', topicFilter)
         if (itemFilter !== 'all') params.set('filter', itemFilter)
         if (itemSort !== 'recent') params.set('sort', itemSort)
+        if (quartileFilter.length > 0) params.set('quartiles', quartileFilter.join(','))
         return `state?${params.toString()}`
       }
 
@@ -1734,7 +1767,7 @@ window.__ModuleLoader__.load({
           api(stateQuery(0))
             .then(applyState)
             .catch((error) => setNote({ kind: 'err', text: `${t('load_failed')}: ${error.message}` })),
-        [topicFilter, itemFilter, itemSort],
+        [topicFilter, itemFilter, itemSort, quartileFilter],
       )
 
       React.useEffect(() => {
@@ -2074,7 +2107,9 @@ window.__ModuleLoader__.load({
                 ? t('empty_high')
                 : itemFilter === 'fulltext'
                   ? t('empty_fulltext')
-                  : t('empty_filtered')
+                  : quartileFilter.length > 0
+                    ? t('quartile_filter_empty')
+                    : t('empty_filtered')
 
       const filterButtons = [
         ['all', t('filter_items'), counts.all],
@@ -2145,6 +2180,50 @@ window.__ModuleLoader__.load({
           : null,
       )
 
+      // 分区筛选单独一行：勾选式多选，跟上面「全部/高质量/未读」那排按下就切的做法不同
+      //（分区是「可以同时看 Q1 和 Q2」的维度）。计数来自 counts.quartiles + counts.all。
+      const quartileOptions = Array.isArray(data.journalQuartiles) && data.journalQuartiles.length > 0
+        ? data.journalQuartiles
+        : ['Q1', 'Q2', 'Q3', 'Q4']
+      const quartileCounts = counts.quartiles && typeof counts.quartiles === 'object' ? counts.quartiles : {}
+      const toggleQuartile = (value) => {
+        setQuartileFilter((current) =>
+          current.includes(value) ? current.filter((q) => q !== value) : current.concat(value),
+        )
+      }
+      const quartileBar = h(
+        'div',
+        { className: 'drr-filters drr-quartile-bar' },
+        h('span', { className: 'drr-presets-label', title: t('quartile_filter_hint') }, t('quartile_filter')),
+        h(
+          'div',
+          { className: 'drr-seg drr-seg-check' },
+          quartileOptions.map((value) => {
+            const on = quartileFilter.includes(value)
+            const count = Number(quartileCounts[value]) || 0
+            return h(
+              'button',
+              {
+                key: value,
+                className: `${on ? 'drr-seg-on' : ''} drr-qbtn drr-qbtn-${String(value).toLowerCase()}`,
+                onClick: () => toggleQuartile(value),
+                title: `${t('journal_quartile_title')} · ${count}`,
+              },
+              value,
+              h('span', { className: 'drr-seg-count' }, String(count)),
+            )
+          }),
+        ),
+        quartileFilter.length > 0
+          ? h(
+              'button',
+              { className: 'drr-btn drr-btn-sm', onClick: () => setQuartileFilter([]) },
+              t('quartile_any'),
+            )
+          : null,
+        h('span', { className: 'drr-hint drr-hint-inline' }, t('quartile_filter_hint')),
+      )
+
       // 顶部状态条：把「上次什么时候扫的、扫多宽、抓到几篇、其中几篇读了全文」
       // 从设置页搬到论文列表顶上 —— 这些是用户每次打开面板最想先知道的事，
       // 藏在设置里等于没有。
@@ -2179,6 +2258,7 @@ window.__ModuleLoader__.load({
         noteEl,
         statusStrip,
         filterBar,
+        quartileBar,
         items.length === 0
           ? h('div', { className: 'drr-empty' }, emptyText)
           : items.map((item) =>

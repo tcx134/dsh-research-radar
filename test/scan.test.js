@@ -735,6 +735,57 @@ test('backfillQuality 不会因为补不到 ISSN 就抹掉已有分数', async (
   assert.equal(state.items[0].issn ?? '', '')
 })
 
+/**
+ * 分区是后加的口径。老论文的 `quality` 是按「综合分切档」算的，没有
+ * `journalQuartile` 字段 —— 结果是同一本 Q4 刊里的论文会因为被引多、有开放获取
+ * 而混进「高质量」，正是「好的和不好的都分在一个质量」的来源。
+ * 阈值拿到手之后必须把这批按新口径重算一遍。
+ */
+test('backfillQuality 会给缺期刊分区的老分数按分区重算档位', async (t) => {
+  const dir = await tempDir(t)
+  await seedState(dir, {
+    version: 1,
+    topics: [],
+    items: [
+      {
+        id: 'crossref:10.1/low',
+        title: 'Low tier journal paper',
+        doi: '10.1/low',
+        issn: '1111-2222',
+        publishedAt: '2025-05-01',
+        // 被引很多、还有开放获取，旧口径算出「高质量」
+        citations: 500,
+        openAccess: true,
+        quality: { score: 78, tier: 'high', reasons: ['被引 500 次'], impactFactor: 1.2 },
+        discoveredAt: '2026-10-01T00:00:00.000Z',
+      },
+    ],
+    seen: {},
+    settings: {},
+  })
+  const store = createStore({}, { dataDir: dir })
+  // 这本刊 IF 只有 1.2，而该子学科的 Q1 线是 4.77 —— 应该是 Q4
+  const journals = new Map([
+    ['1111-2222', { twoYearMeanCitedness: 1.2, hIndex: 20, subfieldId: '2210' }],
+  ])
+  const journalCache = {
+    ensure: async () => {},
+    asMap: () => journals,
+    ensureThresholds: async () => {},
+    thresholds: () => ({ 2210: { q1: 4.77, q2: 2.51, q3: 1.29, total: 2373 } }),
+  }
+
+  const filled = await backfillQuality(store, { journals, journalCache })
+  assert.ok(filled >= 1)
+
+  const item = (await store.load()).items[0]
+  assert.equal(item.quality.journalQuartile, 'Q4')
+  // 档位由分区决定，不再看综合分
+  assert.equal(item.quality.tier, 'low')
+  // 分数本身还是照常算出来，只是不再决定档位
+  assert.ok(item.quality.score > 0)
+})
+
 // ---------------------------------------------------------------------------
 // 历史失败重试：一篇论文入库后 seen 会永远跳过它，所以「摘要失败」不自愈。
 // 解析器变强之后必须有一条路把旧记录救回来，否则用户只能手动清空重抓。

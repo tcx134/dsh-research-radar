@@ -541,11 +541,32 @@ export function shouldSpread(lookbackDays) {
   return Number.isFinite(days) && days > WIDE_WINDOW_DAYS
 }
 
-/** 取一页 OpenAlex works。`sort` 支持 `publication_date:desc` / `cited_by_count:desc`。 */
-async function fetchOpenAlexPage({ filter, perPage, sort, api }) {
+/**
+ * 取一页 OpenAlex works。
+ *
+ * `sort` 支持 `publication_date:desc` / `cited_by_count:desc` / `relevance_score:desc`。
+ *
+ * `search` 走 works 根上的相关度检索（不是 filter 里的 `search:` 子句），
+ * 和 filter 同时用时会「先按 filter 限定范围、再按相关度排」。这是本项目里
+ * 召回效果最好的一种组合，实测逐年对比（主题 metal rubber，180 天窗口）：
+ *
+ * | 取法                              | 命中数 | 取回 25 条的标题相关度 |
+ * |-----------------------------------|--------|------------------------|
+ * | `filter=title_and_abstract.search:"metal rubber"` | 61 | 混合了大量 wire mesh / 多孔金属等相邻主题 |
+ * | `?search=metal rubber` + 日期 filter | 9212 | **25/25 全部真命中** |
+ *
+ * 差别的原因：filter 里的短语子句只能匹配「标题或摘要里连续出现这两个词」，
+ * 而 `search=` 是 OpenAlex 自己的相关度模型，能把 `metal-rubber`、`metal rubber
+ * (MR)`、词序颠倒等写法一起召回，还自带相关性排序。缺点是全库相关度检索会
+ * 捞进大量弱相关文献（30 天窗口 total 1284），所以必须靠 fetchOpenAlex 里的
+ * 本地打分（finalize 的 strict 过滤）再筛一遍。
+ */
+async function fetchOpenAlexPage({ filter, perPage, sort, search, api }) {
+  const searchParam = typeof search === 'string' && search !== '' ? `&search=${encodeURIComponent(search)}` : ''
   const url =
     'https://api.openalex.org/works?filter=' +
     encodeFilter(filter) +
+    searchParam +
     `&per-page=${perPage}&sort=${sort}&select=id,doi,title,display_name,publication_date,publication_year,authorships,primary_location,abstract_inverted_index,cited_by_count,cited_by_percentile_year,open_access,type` +
     mailtoParam(api)
   const payload = JSON.parse(await getText(url))
@@ -560,17 +581,47 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
   const filter = openAlexFilter(query, venueIds, lookbackDays)
   if (filter === '') throw new Error('研究方向至少要填关键词 / 作者 / 期刊 / 单位之一')
   const perPage = Math.min(100, Math.max(10, max * 4))
-  // 宽窗口两路取样：一路按时间倒序拿最新的，一路按被引倒序拿窗口内绕不开的经典。
-  // 两路合并去重后交给 finalize 打分筛选，既不会只剩「昨天的论文」，
-  // 也不会把用户想看的近期工作挤掉（本地打分里时间和相关度都参与排序）。
-  // 代价是宽窗口多一次请求，所以只在窗口 > 90 天时才这么做。
-  const sorts = shouldSpread(lookbackDays)
-    ? ['publication_date:desc', 'cited_by_count:desc']
-    : ['publication_date:desc']
+
+  // 多条「通道」并行取样，合并后统一交给 finalize 打分与 strict 过滤。
+  //
+  // 为什么必须多路：只用「短语子句 + 出版日期倒序」一路时，召回被卡死在
+  // 短语的字面匹配上。实测主题 metal rubber，180 天窗口里这一路只有 37 条，
+  // 而换成 OpenAlex 的相关度检索能得到 8975 条候选（取回 50 条里 28 条标题
+  // 真含该短语）。同一个主题的全量是 872 条 —— 说明大量论文的写法是
+  // `metal-rubber`、`metal rubber (MR)` 或者词序颠倒，字面短语匹配全漏。
+  //
+  // 精度靠本地兜底：`finalize()` 的 strict 过滤会要求标题/摘要里真的出现
+  // 主要关键词，弱相关文献在这一步被丢掉，所以放宽远端召回不会污染结果。
+  const lanes = []
+  // 通道 1：精确短语 + 最新优先。保证「昨天刚发的」不会因为相关度分数低而掉出。
+  lanes.push({ filter, sort: 'publication_date:desc' })
+  // 通道 2：相关度检索。filter 只留硬性范围（日期/语言/期刊/作者），
+  // 关键词交给 search= 自己去理解，绕开短语字面匹配。
+  //
+  // 注意必须把 `strong` 一起清掉：`openAlexFilter()` 内部走 `serverKeywords()`，
+  // 而 `serverKeywords()` 优先返回 `strong` —— 只清 `keywords` 的话短语子句
+  // 会被原样加回来，这一路就退化成了通道 1，等于白加。
+  if (query.keywords.length > 0) {
+    const looseFilter = openAlexFilter({ ...query, keywords: [], strong: [] }, venueIds, lookbackDays)
+    const searchText = serverKeywords(query).join(' ')
+    if (looseFilter !== '' && searchText !== '') {
+      lanes.push({ filter: looseFilter, sort: 'relevance_score:desc', search: searchText })
+    }
+  }
+  // 通道 3：宽窗口再补一路「被引最高」，避免窗口里绕不开的经典被最新论文挤掉。
+  if (shouldSpread(lookbackDays)) lanes.push({ filter, sort: 'cited_by_count:desc' })
+
   const works = []
   const seenWorkIds = new Set()
-  for (const sort of sorts) {
-    const page = await fetchOpenAlexPage({ filter, perPage, sort, api })
+  for (const lane of lanes) {
+    let page = []
+    try {
+      page = await fetchOpenAlexPage({ filter: lane.filter, perPage, sort: lane.sort, search: lane.search, api })
+    } catch {
+      // 单条通道失败不能拖垮整次抓取：相关度检索在高峰期更容易被限流，
+      // 而通道 1 已经能给出可用结果，没必要让整个源报错。
+      continue
+    }
     for (const work of page) {
       const key = String(work?.id ?? '')
       if (key !== '') {
@@ -679,30 +730,39 @@ export async function fetchCrossref({ query, max, api, lookbackDays = 30 }) {
   if (query.authors.length > 0) params.set('query.author', query.authors.join(' '))
   if (query.venues.length > 0) params.set('query.container-title', query.venues.join(' '))
   if (query.institutions.length > 0) params.set('query.affiliation', query.institutions.join(' '))
-  const filters = ['type:journal-article']
+  // Crossref 的 type 过滤：一次只能写一种 type（`type:a|b` 报 400
+  // `type-not-valid`，`type:a,type:b` 只会生效前一个），所以想要的类型必须
+  // 分别取一趟再合并。会议论文不能漏 —— 实测同一主题 90 天窗口里
+  // `type:journal-article` 有 9945 条、`type:proceedings-article` 有 184 条，
+  // 后者虽然只占 1.9%，但对工程类主题恰恰是重要来源（会议是很多方向首发的地方）。
+  const filterBase = []
   if (lookbackDays > 0) {
-    filters.push(`from-pub-date:${new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10)}`)
+    filterBase.push(`from-pub-date:${new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10)}`)
   }
   // Crossref 里有把出版日期填到明年的记录，卡一个上限避免推「未来论文」。
-  filters.push(`until-pub-date:${new Date().toISOString().slice(0, 10)}`)
-  params.set('filter', filters.join(','))
-  // 按相关度排序，不按出版日期排序。
-  //
-  // 为什么：Crossref 的 `query.bibliographic` 是全文模糊匹配，`metal rubber` 会
-  // 命中一切含 metal / rubber 的文章（实测 15 万条）。如果再加 `sort=published`
-  // 倒序，取回的前 80 条全是最新发表的、和关键词毫不相干的文章，本地 strict
-  // 一过滤就剩 0 条 —— 这正是「检索得太少」的第二个根因。
-  // 换成默认的相关度排序后，同样 80 条里有 34 条标题真的含 metal rubber。
-  // 时间范围由上面的 from-pub-date / until-pub-date filter 保证。
+  filterBase.push(`until-pub-date:${new Date().toISOString().slice(0, 10)}`)
+  const types = ['journal-article', 'proceedings-article']
   params.set('rows', String(Math.min(100, Math.max(20, max * 8))))
   params.set(
     'select',
     'DOI,title,container-title,ISSN,published,author,abstract,is-referenced-by-count,URL',
   )
+  // 按相关度排序，不按出版日期排序。
+  //
+  // 为什么：Crossref 的 `query.bibliographic` 是全文模糊匹配，`metal rubber` 会
+  // 命中一切含 metal / rubber 的文章（实测 15 万条）。如果再加 `sort=published`
+  // 倒序，取回的前 80 条全是最新发表的、和关键词毫不相干的文章，本地 strict
+  // 一过滤就剩 0 条。换成默认的相关度排序后，同样 80 条里有 34 条标题真的含
+  // metal rubber。时间范围由 from-pub-date / until-pub-date filter 保证。
   const mail = typeof api?.mailto === 'string' && api.mailto !== '' ? api.mailto : 'radar@example.com'
   params.set('mailto', mail)
-  const payload = JSON.parse(await getText(`https://api.crossref.org/works?${params.toString()}`))
-  const rows = Array.isArray(payload?.message?.items) ? payload.message.items : []
+  const rows = []
+  for (const type of types) {
+    params.set('filter', [`type:${type}`, ...filterBase].join(','))
+    const payload = JSON.parse(await getText(`https://api.crossref.org/works?${params.toString()}`))
+    const batch = Array.isArray(payload?.message?.items) ? payload.message.items : []
+    for (const row of batch) rows.push(row)
+  }
   return rows.map((row) => {
     const doi = String(row?.DOI ?? '')
     const authors = Array.isArray(row?.author)

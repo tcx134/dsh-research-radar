@@ -264,6 +264,7 @@ function sampleState() {
           tier: 'high',
           impactFactor: 8.5127,
           journalHIndex: 154,
+          journalQuartile: 'Q1',
           quartile: 'Q1',
           citationPercentile: 92,
           reasons: ['期刊影响因子 8.5', '被引前 8%（Q1）', '被引 7 次', '开放获取（可抓全文）'],
@@ -303,7 +304,8 @@ function sampleState() {
       },
     ],
     page: { total: 2, offset: 0, limit: 50, hasMore: true },
-    counts: { all: 2, unread: 1, starred: 1, highQuality: 1, fullText: 1 },
+    counts: { all: 2, unread: 1, starred: 1, highQuality: 1, fullText: 1, quartiles: { Q1: 1, Q2: 0, Q3: 0, Q4: 0, none: 1 } },
+    journalQuartiles: ['Q1', 'Q2', 'Q3', 'Q4'],
     settings: {
       scan: {
         enabled: true,
@@ -402,8 +404,10 @@ test('面板首屏渲染出论文卡片、筛选条与摘要字段', async () =>
     assert.match(text, /Q1/)
     const quartileChip = findAll(tree, (el) => typeof el.props?.className === 'string' && el.props.className.includes('drr-quartile-q1'))[0]
     assert.ok(quartileChip !== undefined, 'Q1 应该带 drr-quartile-q1 样式')
-    // 没算过百分位的条目不该硬塞 Q4（`Number(null) === 0` 会把它标成末档）
-    assert.doesNotMatch(text, /Q4/)
+    // 没算过百分位的条目不该硬塞 Q4（`Number(null) === 0` 会把它标成末档）。
+    // 只看卡片上的徽章 —— 顶部分区筛选条里本来就有「Q4」这个选项。
+    const q4Chip = findAll(tree, (el) => typeof el.props?.className === 'string' && el.props.className.includes('drr-quartile-q4'))
+    assert.equal(q4Chip.length, 0, '没有分区的条目不该渲染 Q4 徽章')
     // 「凭什么给这个分」默认收起，点质量徽章才展开
     assert.doesNotMatch(text, /期刊影响因子 8\.5/)
     buttonByText(tree, '高质量 · 79').props.onClick()
@@ -420,6 +424,72 @@ test('面板首屏渲染出论文卡片、筛选条与摘要字段', async () =>
     assert.match(text, /收藏\s*1/)
     // 加载更多
     assert.match(text, /加载更多 \(2\/2\)/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('分区筛选是勾选式多选，勾了之后按 quartiles 参数重新拉', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const fetchStub = installFetch(() => ({ body: sampleState() }))
+  try {
+    let tree = await mount(mini, Panel)
+    await new Promise((r) => setTimeout(r, 0))
+    // 四个分区档都摆出来，并带各自篇数（Q1 有 1 篇，其余 0）
+    assert.match(textOf(tree), /分区\s*Q1\s*1/)
+    assert.match(textOf(tree), /Q4\s*0/)
+    // 一开始不带 quartiles 参数（= 不限）
+    assert.doesNotMatch(fetchStub.calls[0].url, /quartiles=/)
+
+    const q1Button = buttonByText(tree, 'Q1')
+    assert.ok(q1Button !== null, '应该有 Q1 筛选按钮')
+    q1Button.props.onClick()
+    mini.beginRender()
+    tree = Panel({})
+    await new Promise((r) => setTimeout(r, 0))
+    const filtered = fetchStub.calls[fetchStub.calls.length - 1]
+    assert.match(filtered.url, /quartiles=Q1/)
+
+    // 再勾 Q2 → 两个一起传，不是互相覆盖
+    buttonByText(tree, 'Q2').props.onClick()
+    mini.beginRender()
+    tree = Panel({})
+    await new Promise((r) => setTimeout(r, 0))
+    const both = fetchStub.calls[fetchStub.calls.length - 1]
+    assert.match(both.url, /quartiles=Q1%2CQ2|quartiles=Q1,Q2/)
+
+    // 点「不限分区」清空
+    buttonByText(tree, '不限分区').props.onClick()
+    mini.beginRender()
+    tree = Panel({})
+    await new Promise((r) => setTimeout(r, 0))
+    const cleared = fetchStub.calls[fetchStub.calls.length - 1]
+    assert.doesNotMatch(cleared.url, /quartiles=/)
+  } finally {
+    fetchStub.restore()
+  }
+})
+
+test('卡片优先显示期刊分区，没有期刊分区才退回被引百分位分区', async () => {
+  const mini = makeReact()
+  const { Panel } = await loadClient(mini.React)
+  const state = sampleState()
+  // 第一条：期刊分区 Q1，论文级分区 Q2 —— 应该显示 Q1（新论文也能有分区）
+  state.items[0].quality.journalQuartile = 'Q1'
+  state.items[0].quality.quartile = 'Q2'
+  // 第二条：只有论文级分区（老数据没算过期刊分区）
+  state.items[1].quality = { score: 40, tier: 'medium', reasons: [], quartile: 'Q3', journalQuartile: null }
+  const fetchStub = installFetch(() => ({ body: state }))
+  try {
+    const tree = await mount(mini, Panel)
+    const chips = findAll(tree, (el) => typeof el.props?.className === 'string' && el.props.className.includes('drr-chip-quartile'))
+    assert.equal(chips.length, 2)
+    assert.equal(textOf(chips[0]), 'Q1')
+    assert.equal(textOf(chips[1]), 'Q3')
+    // 期刊分区的 title 与论文级的不同，用户 hover 能看出差别
+    assert.match(String(chips[0].props.title), /期刊分区/)
+    assert.match(String(chips[1].props.title), /被引排位/)
   } finally {
     fetchStub.restore()
   }
