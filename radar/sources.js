@@ -45,6 +45,30 @@ function throttle() {
 const RETRYABLE = new Set([429, 500, 502, 503, 504])
 const RETRY_DELAYS = [4000, 9000, 18000]
 
+/**
+ * OpenAlex 的检索接口要单独吃一套「按 IP 共享的免费日预算」，用完当天不再恢复
+ * （普通 filter 查询走另一套配额，不受影响）。这种 429 重试是纯浪费：三次退避
+ * 要等 31 秒，而预算不会在 31 秒内回来。
+ *
+ * 判据是响应体里的文案，不是状态码 —— 同样是 429，「搜索集群负载高」那种几秒后
+ * 就恢复，值得重试；「预算已用尽」不值得。
+ */
+function isBudgetExhausted(text) {
+  const body = String(text ?? '')
+  return /Insufficient budget/i.test(body) || /budget is used up/i.test(body)
+}
+
+/** 带 `exhausted` 标记的错误：上层据此告诉用户「去配 API key」，而不是含糊地报个 429。 */
+function httpError(url, status, statusText, text) {
+  const error = new Error(`HTTP ${status} ${statusText} for ${url}`)
+  error.status = status
+  if (isBudgetExhausted(text)) {
+    error.exhausted = true
+    error.message = `HTTP 429 检索预算已用尽（${url}）`
+  }
+  return error
+}
+
 async function getText(url, headers = {}) {
   let lastError
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt += 1) {
@@ -62,7 +86,9 @@ async function getText(url, headers = {}) {
       })
       const text = await res.text()
       if (res.ok) return text
-      lastError = new Error(`HTTP ${res.status} ${res.statusText} for ${url}`)
+      lastError = httpError(url, res.status, res.statusText, text)
+      // 预算用尽当天不会恢复，重试只会把扫描拖长半分钟。
+      if (lastError.exhausted === true) throw lastError
       if (!RETRYABLE.has(res.status) || attempt === RETRY_DELAYS.length) throw lastError
     } catch (error) {
       if (error === lastError) throw error
@@ -573,7 +599,7 @@ async function fetchOpenAlexPage({ filter, perPage, sort, search, api }) {
   return Array.isArray(payload?.results) ? payload.results : []
 }
 
-export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
+export async function fetchOpenAlex({ query, max, api, lookbackDays = 30, notices = null }) {
   const venueIds = await resolveVenueIds(query.venues, api)
   if (query.venues.length > 0 && venueIds.length === 0) {
     throw new Error(`期刊名未能在 OpenAlex 中解析：${query.venues.join('、')}`)
@@ -613,13 +639,21 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
 
   const works = []
   const seenWorkIds = new Set()
+  let okLanes = 0
+  let exhaustedLanes = 0
   for (const lane of lanes) {
     let page = []
     try {
       page = await fetchOpenAlexPage({ filter: lane.filter, perPage, sort: lane.sort, search: lane.search, api })
-    } catch {
-      // 单条通道失败不能拖垮整次抓取：相关度检索在高峰期更容易被限流，
-      // 而通道 1 已经能给出可用结果，没必要让整个源报错。
+      okLanes += 1
+    } catch (error) {
+      // 单条通道失败不能拖垮整次抓取：通道 1 通常还能给出可用结果。
+      // 但**不能静默**——相关度那一路被限流时召回会明显变差，用户只会看到
+      // 「怎么又没搜到论文」，查不出原因。
+      if (error?.exhausted === true) exhaustedLanes += 1
+      else if (Array.isArray(notices)) {
+        notices.push({ source: 'openalex', message: `有一路检索失败：${String(error?.message ?? error)}` })
+      }
       continue
     }
     for (const work of page) {
@@ -630,6 +664,18 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30 }) {
       }
       works.push(work)
     }
+  }
+  if (Array.isArray(notices) && exhaustedLanes > 0) {
+    notices.push({
+      source: 'openalex',
+      message:
+        `检索预算已用尽，本次少了 ${exhaustedLanes} 路相关度检索的结果（召回会明显变少）。` +
+        'OpenAlex 的检索接口对无 API key 的请求按 IP 共享每日免费额度，用完后当天不再恢复；' +
+        '到 openalex.org/rest-api 申请一个免费 key 填进设置里的「OpenAlex API Key」即可不受此限。',
+    })
+  }
+  if (okLanes === 0 && works.length === 0 && Array.isArray(notices)) {
+    notices.push({ source: 'openalex', message: '所有检索通道都失败了，本次没有从 OpenAlex 拿到任何论文' })
   }
   const results = works
   const items = results.map((work) => {
@@ -1083,7 +1129,11 @@ export async function collectFromSource({
 
   try {
     if (source === 'openalex') {
-      items = await fetchOpenAlex({ ...base, query })
+      // 把通道级的失败（尤其是检索预算用尽）从 fetchOpenAlex 里带出来，
+      // 否则用户在面板上只会看到「没有新论文」，不知道是召回被限流吃掉了。
+      const notices = []
+      items = await fetchOpenAlex({ ...base, query, notices })
+      for (const notice of notices) errors.push(notice)
     } else if (source === 'crossref') {
       items = await fetchCrossref({ ...base, query })
     } else if (source === 'pubmed') {

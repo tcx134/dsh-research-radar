@@ -83,7 +83,10 @@ window.__ModuleLoader__.load({
         fulltext_hint: '关着时只用摘要生成结构化摘要 —— 多数情况下摘要足够判断值不值得读，而且快得多。打开后会依次尝试 arXiv、Europe PMC、开放获取 PDF、出版社 PDF，每篇多花几秒到几十秒，且约七成论文拿不到全文（会自动回退摘要，不报错）。想读全文时点卡片上的「精读」让 Agent 现抓更划算。',
         api_settings: '检索接口',
         api_mailto: '联系邮箱（OpenAlex / Crossref 推荐填写，可提高配额）',
-        api_openalex_key: 'OpenAlex API Key（可选，留空用公共配额）',
+        api_openalex_key: 'OpenAlex API Key（建议填，见下方说明）',
+        api_openalex_hint:
+          '强烈建议申请一个免费 key 填在这里。OpenAlex 的检索接口对没填 key 的请求按 IP 共享每天一小点免费额度，用完当天就不再恢复 —— 表现就是「这几天怎么搜不到论文」，而且只有检索会受影响（普通查询照常），很难往限流上想。key 免费，到 openalex.org/rest-api 用邮箱申请，邮件里点一下链接就生效；填进来之后这里的所有检索都不再和别人抢额度。',
+        api_mailto_hint: '推荐填。OpenAlex / Crossref 都支持用邮箱标识调用方，属于他们的「礼貌池」，配额更宽。',
         mail_settings: '邮件推送',
         mail_enabled: '启用邮件推送',
         smtp_host: 'SMTP 服务器',
@@ -335,7 +338,10 @@ window.__ModuleLoader__.load({
         fulltext_hint: 'When off, summaries are built from the abstract alone — usually enough to judge whether a paper is worth reading, and much faster. When on, it tries arXiv, Europe PMC, open-access PDFs, then the publisher PDF: a few extra seconds to tens of seconds per paper, and roughly seven in ten papers have no accessible full text (they fall back to the abstract, which is not an error). For a deep read, the 「Deep read」 button on a card is a better trade.',
         api_settings: 'Query APIs',
         api_mailto: 'Contact email (recommended for OpenAlex / Crossref quotas)',
-        api_openalex_key: 'OpenAlex API key (optional)',
+        api_openalex_key: 'OpenAlex API key (recommended, see note below)',
+        api_openalex_hint:
+          'Get a free key and put it here. OpenAlex search endpoints put requests without a key into a small daily budget shared by everyone on your network IP; once it runs out it does not come back until midnight UTC. That shows up as "why have I found nothing new for days", and only search is affected (plain queries still work), so it is very hard to trace back to rate limiting. The key is free: request one at openalex.org/rest-api with your email, click the link in the mail, then paste it here so all searches stop competing for that shared budget.',
+        api_mailto_hint: 'Recommended. OpenAlex and Crossref both use the email to identify callers (their "polite pool"), which gets you a wider quota.',
         mail_settings: 'Email delivery',
         mail_enabled: 'Enable email delivery',
         smtp_host: 'SMTP host',
@@ -2890,6 +2896,7 @@ window.__ModuleLoader__.load({
                   onChange: (e) => setApiDraft({ ...apiDraft, mailto: e.target.value }),
                   placeholder: 'you@example.com',
                 }),
+                h('div', { className: 'drr-hint' }, t('api_mailto_hint')),
                 h('label', { className: 'drr-label' }, t('api_openalex_key')),
                 h('input', {
                   className: 'drr-input',
@@ -2897,6 +2904,7 @@ window.__ModuleLoader__.load({
                   onChange: (e) => setApiDraft({ ...apiDraft, openalexKey: e.target.value }),
                   placeholder: '(optional)',
                 }),
+                h('div', { className: 'drr-hint' }, t('api_openalex_hint')),
               ),
         ),
         h(
