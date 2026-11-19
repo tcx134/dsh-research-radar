@@ -605,7 +605,7 @@ function serverKeywords(query) {
   return query.strong.length > 0 ? query.strong : query.keywords
 }
 
-function openAlexFilter(query, venueIds, lookbackDays) {
+function openAlexFilter(query, venueIds, lookbackDays, year = null) {
   const parts = []
   const keywords = serverKeywords(query)
   if (keywords.length > 0) {
@@ -627,6 +627,13 @@ function openAlexFilter(query, venueIds, lookbackDays) {
   // 实测 language:zh|en 的 count 正好等于 zh + en 之和，说明语法有效。
   if (Array.isArray(query.languages) && query.languages.length > 0) {
     parts.push(`language:${query.languages.join('|')}`)
+  }
+  // 历史回溯：按整年取，而不是「从今天往前 N 天」。
+  // 逐年往回扫才能把老论文补齐 —— 实测某主题全量 872 篇，30 天窗口只覆盖 6 篇（0.7%）。
+  if (Number.isInteger(year) && year > 1800) {
+    parts.push(`from_publication_date:${year}-01-01`)
+    parts.push(`to_publication_date:${year}-12-31`)
+    return parts.join(',')
   }
   const today = new Date().toISOString().slice(0, 10)
   // 上限卡在今天：OpenAlex 里存在出版日期填到未来的脏数据，不卡会一直推「未来论文」。
@@ -692,12 +699,13 @@ async function fetchOpenAlexPage({ filter, perPage, sort, search, api }) {
   return Array.isArray(payload?.results) ? payload.results : []
 }
 
-export async function fetchOpenAlex({ query, max, api, lookbackDays = 30, notices = null }) {
+export async function fetchOpenAlex({ query, max, api, lookbackDays = 30, notices = null, year = null }) {
   const venueIds = await resolveVenueIds(query.venues, api)
   if (query.venues.length > 0 && venueIds.length === 0) {
     throw new Error(`期刊名未能在 OpenAlex 中解析：${query.venues.join('、')}`)
   }
-  const filter = openAlexFilter(query, venueIds, lookbackDays)
+  const yearArg = Number.isInteger(year) ? year : null
+  const filter = openAlexFilter(query, venueIds, lookbackDays, yearArg)
   if (filter === '') throw new Error('研究方向至少要填关键词 / 作者 / 期刊 / 单位之一')
   const perPage = Math.min(100, Math.max(10, max * 4))
 
@@ -720,15 +728,24 @@ export async function fetchOpenAlex({ query, max, api, lookbackDays = 30, notice
   // 注意必须把 `strong` 一起清掉：`openAlexFilter()` 内部走 `serverKeywords()`，
   // 而 `serverKeywords()` 优先返回 `strong` —— 只清 `keywords` 的话短语子句
   // 会被原样加回来，这一路就退化成了通道 1，等于白加。
+  //
+  // 年份也必须一起传下去：历史回溯时每一路都要落在同一年里，否则相关度那一路
+  // 会把别的年份的论文混进来（实测按 2023 年取，结果里出现了 2021 和 2026 的论文）。
   if (query.keywords.length > 0) {
-    const looseFilter = openAlexFilter({ ...query, keywords: [], strong: [] }, venueIds, lookbackDays)
+    const looseFilter = openAlexFilter({ ...query, keywords: [], strong: [] }, venueIds, lookbackDays, yearArg)
     const searchText = serverKeywords(query).join(' ')
     if (looseFilter !== '' && searchText !== '') {
       lanes.push({ filter: looseFilter, sort: 'relevance_score:desc', search: searchText })
     }
   }
   // 通道 3：宽窗口再补一路「被引最高」，避免窗口里绕不开的经典被最新论文挤掉。
-  if (shouldSpread(lookbackDays)) lanes.push({ filter, sort: 'cited_by_count:desc' })
+  //
+  // 历史回溯**不加**这一路：回溯是逐年发的，每年多一路请求就多一份被限流的风险，
+  // 而按年份的相关度检索已经能覆盖那一年的代表作（实测 2023 年取回 20 条全相关）。
+  // 少发一路能把 10 年回溯的请求数从 30 次降到 20 次，对无 API key 的用户很关键。
+  if (yearArg === null && shouldSpread(lookbackDays)) {
+    lanes.push({ filter, sort: 'cited_by_count:desc' })
+  }
 
   const works = []
   const seenWorkIds = new Set()
@@ -1214,6 +1231,7 @@ export async function collectFromSource({
   api,
   lookbackDays = 30,
   spread = false,
+  year = null,
 }) {
   const errors = []
   const query = normalizeQuery(topic)
@@ -1225,7 +1243,7 @@ export async function collectFromSource({
       // 把通道级的失败（尤其是检索预算用尽）从 fetchOpenAlex 里带出来，
       // 否则用户在面板上只会看到「没有新论文」，不知道是召回被限流吃掉了。
       const notices = []
-      items = await fetchOpenAlex({ ...base, query, notices })
+      items = await fetchOpenAlex({ ...base, query, notices, year })
       for (const notice of notices) errors.push(notice)
     } else if (source === 'crossref') {
       items = await fetchCrossref({ ...base, query })

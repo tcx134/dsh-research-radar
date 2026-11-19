@@ -721,6 +721,8 @@ export async function runScan(ctx, config, store, options = {}) {
     retriedSummaries: 0,
     /** 本次补到多少篇的「同年同领域被引百分位」（= 分区 Q1–Q4 的数据来源）。 */
     percentilesFilled: 0,
+    /** 这次是不是「历史回溯」（往前扫多年老论文），而不是日常增量扫描。 */
+    history: options.history === true,
   }
 
   if (targets.length === 0) {
@@ -746,6 +748,33 @@ export async function runScan(ctx, config, store, options = {}) {
   const lookbackFor = (topic) =>
     forcedLookback ?? effectiveLookbackDays(topic.lastScanAt, configuredLookback)
 
+  /** 本次每个方向抓多少条。历史回溯时临时调大，日常扫描用设置里的值。 */
+  const perTopicMax =
+    Number.isFinite(Number(options.maxPerTopic)) && Number(options.maxPerTopic) > 0
+      ? Math.round(Number(options.maxPerTopic))
+      : settings.scan.maxPerTopic
+
+  /**
+   * 历史回溯模式：`options.years` 给了年份数组时，逐个年份往回捞老论文。
+   *
+   * 为什么需要：日常扫描只覆盖「最近 N 天」，而一个研究方向的全量文献可能有
+   * 几百上千篇、横跨几十年。实测主题 metal rubber 全库 872 篇，30 天窗口只覆盖
+   * 6 篇（0.7%）—— 用户看到的就是「搜到的论文有明显遗漏」。
+   *
+   * 只有 OpenAlex 支持按年精确取（它有 publication_year 过滤），所以逐年循环
+   * 只对它做；其它源按「覆盖到最老那一年」的宽窗口一次取，靠 `seen` 去重。
+   */
+  const historyYears = Array.isArray(options.years)
+    ? options.years.filter((y) => Number.isInteger(y) && y > 1800)
+    : null
+  const isHistory = historyYears !== null && historyYears.length > 0
+  const historySpanDays = isHistory
+    ? Math.min(
+        3650,
+        Math.ceil((Date.now() - new Date(`${Math.min(...historyYears)}-01-01T00:00:00Z`).getTime()) / DAY_MS) + 1,
+      )
+    : 0
+
   /**
    * 本次扫描抓到的全部候选（尚未去重）。同一篇论文可能被多个源、多个方向各抓
    * 一次，先都收进来，再按 score 从高到低挑代表 —— 这样留下的是信息最全的那条
@@ -760,41 +789,63 @@ export async function runScan(ctx, config, store, options = {}) {
     usedLookbacks.push(topicLookback)
     result.scannedTopics.push({ id: topic.id, name: topicLabel(topic), lookbackDays: topicLookback })
     scannedTopicIds.push(topic.id)
-    for (const source of topic.sources) {
-      const { items, errors } = await collectFromSource({
-        source,
-        topic,
-        max: settings.scan.maxPerTopic,
-        rss: settings.rss,
-        api: settings.api,
-        lookbackDays: topicLookback,
-        // 大窗口按年份摊开配额，否则 max 条全被最近几天占满，用户选了「3 年」
-        // 看到的还是上周的论文。判断依据是实际窗口而不是「是不是回溯」——
-        // 新方向首次扫描用的是完整配置窗口（可能 3 年），同样需要摊开。
-        spread: shouldSpread(topicLookback),
+
+    /** 收一批抓回来的原始条目。多个年份 / 多个源共用这段去重逻辑。 */
+    const absorb = (raw) => {
+      if (raw === null || typeof raw.id !== 'string' || raw.id === '') return
+      // 跨源去重（缺陷 #1）：同一篇论文在不同库里 id 不同，必须按 DOI /
+      // arXiv 编号 / 规范化标题+年份 判重，否则面板和邮件里会重复出现。
+      const keys = dedupeKeys(raw)
+      if (keys.length === 0) return
+      if (keys.some((key) => Object.prototype.hasOwnProperty.call(state.seen, key))) return
+      candidates.push({
+        keys,
+        item: {
+          ...raw,
+          topicId: topic.id,
+          topicName: topicLabel(topic),
+          discoveredAt: nowIso(),
+          read: false,
+          summary: null,
+          summaryError: '',
+        },
       })
-      for (const error of errors) {
-        result.errors.push({ topic: topicLabel(topic), ...error })
-      }
-      for (const raw of items) {
-        if (raw === null || typeof raw.id !== 'string' || raw.id === '') continue
-        // 跨源去重（缺陷 #1）：同一篇论文在不同库里 id 不同，必须按 DOI /
-        // arXiv 编号 / 规范化标题+年份 判重，否则面板和邮件里会重复出现。
-        const keys = dedupeKeys(raw)
-        if (keys.length === 0) continue
-        if (keys.some((key) => Object.prototype.hasOwnProperty.call(state.seen, key))) continue
-        candidates.push({
-          keys,
-          item: {
-            ...raw,
-            topicId: topic.id,
-            topicName: topicLabel(topic),
-            discoveredAt: nowIso(),
-            read: false,
-            summary: null,
-            summaryError: '',
-          },
+    }
+
+    for (const source of topic.sources) {
+      if (!isHistory) {
+        const { items, errors } = await collectFromSource({
+          source,
+          topic,
+          max: perTopicMax,
+          rss: settings.rss,
+          api: settings.api,
+          lookbackDays: topicLookback,
+          // 大窗口按年份摊开配额，否则 max 条全被最近几天占满，用户选了「3 年」
+          // 看到的还是上周的论文。判断依据是实际窗口而不是「是不是回溯」——
+          // 新方向首次扫描用的是完整配置窗口（可能 3 年），同样需要摊开。
+          spread: shouldSpread(topicLookback),
         })
+        for (const error of errors) result.errors.push({ topic: topicLabel(topic), ...error })
+        for (const raw of items) absorb(raw)
+        continue
+      }
+
+      // 历史模式：OpenAlex 逐年精确取，其它源一次性取到最老那一年。
+      const yearsForSource = source === 'openalex' ? historyYears : [null]
+      for (const year of yearsForSource) {
+        const { items, errors } = await collectFromSource({
+          source,
+          topic,
+          max: perTopicMax,
+          rss: settings.rss,
+          api: settings.api,
+          lookbackDays: source === 'openalex' ? 0 : historySpanDays,
+          spread: true,
+          year,
+        })
+        for (const error of errors) result.errors.push({ topic: topicLabel(topic), ...error })
+        for (const raw of items) absorb(raw)
       }
     }
   }

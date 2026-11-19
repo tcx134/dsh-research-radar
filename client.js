@@ -72,6 +72,13 @@ window.__ModuleLoader__.load({
         backfill_running: '回溯中…',
         backfill_hint: '用上面的窗口一次性把老论文捞回来（会跳过增量窗口）',
         backfill_done: '回溯完成',
+        history_backfill: '历史回溯',
+        history_start: '按年份补老论文',
+        history_running: '回溯中…',
+        history_done: '历史回溯完成',
+        history_years: '覆盖年份',
+        years_unit: '年',
+        history_hint: '日常扫描只看最近一段时间，老论文永远进不来。这里按年份逐个往回捞（一年一次请求，逐年补）。年份越多越慢，建议先从 3 年试起。',
         do_summarize: '用 LLM 生成结构化摘要',
         summary_depth: '解析深度',
         depth_brief: '精简',
@@ -327,6 +334,13 @@ window.__ModuleLoader__.load({
         backfill_running: 'Backfilling…',
         backfill_hint: 'Fetch older papers with the window above, ignoring the incremental window',
         backfill_done: 'Backfill finished',
+        history_backfill: 'History',
+        history_start: 'Fetch older papers by year',
+        history_running: 'Backfilling…',
+        history_done: 'History backfill finished',
+        history_years: 'Covering',
+        years_unit: 'y',
+        history_hint: 'Routine scans only look at recent days, so older papers never make it in. This walks back year by year (one request per year). More years is slower — start with 3.',
         do_summarize: 'Generate structured summary with LLM',
         summary_depth: 'Summary depth',
         depth_brief: 'Brief',
@@ -1720,6 +1734,9 @@ window.__ModuleLoader__.load({
       // 期刊分区多选：空数组 = 不限。像 EasyScholar 那样让用户自己挑要看哪几档，
       // 而不是所有人共用同一个「高分优先」的口味。
       const [quartileFilter, setQuartileFilter] = React.useState([])
+      // 历史回溯要补几年（含今年）。默认 3 年：够把「明显遗漏」补个大概，
+      // 又不会一次打出几十次上游请求。
+      const [historyYears, setHistoryYears] = React.useState(3)
       const [items, setItems] = React.useState([])
       const [page, setPage] = React.useState({ total: 0, offset: 0, limit: PAGE_SIZE, hasMore: false })
       const [counts, setCounts] = React.useState({ all: 0, unread: 0, starred: 0, highQuality: 0, fullText: 0 })
@@ -1893,6 +1910,52 @@ window.__ModuleLoader__.load({
               // 0 有两种含义：全都能查到的已经查过了（窗口内），或者上游确实没有
               setNote({ kind: 'ok', text: `${t('quartile_backfill_done')} · ${t('quartile_none_new')}` })
             }
+          })
+          .catch((error) =>
+            setNote({
+              kind: 'err',
+              text:
+                error.status === 405 || error.status === 404
+                  ? `${t('retry_need_restart')}（HTTP ${error.status}）`
+                  : error.message,
+            }),
+          )
+          .finally(() => setBusy(''))
+      }
+
+      /**
+       * 历史回溯：按年份把老论文捞进来。
+       *
+       * 为什么需要单独一个入口：日常扫描只覆盖「最近 N 天」，而一个研究方向
+       * 的全量文献可能有几百上千篇、横跨几十年。实测主题 metal rubber 在
+       * OpenAlex 有 872 篇，30 天窗口只覆盖 6 篇（0.7%）—— 用户看到的就是
+       * 「搜到的论文有明显遗漏」。回溯按年精确取，一次补几年。
+       */
+      const runHistory = () => {
+        const years = Math.max(1, Math.min(30, Number(historyYears) || 3))
+        const now = new Date().getUTCFullYear()
+        const list = []
+        for (let i = 0; i < years; i += 1) list.push(now - i)
+        setBusy('history')
+        setNote(null)
+        api('scan', { years: list, perTopicMax: scanDraft ? scanDraft.maxPerTopic : undefined })
+          .then((result) => {
+            absorbSettings(result.state)
+            void refresh()
+            const head = `${t('history_done')}：${result.newCount} ${t('new_items')}`
+            const facts = []
+            if (Array.isArray(list) && list.length > 0) {
+              facts.push(`${t('history_years')} ${list[list.length - 1]}–${list[0]}`)
+            }
+            if (Number(result.backfilled) > 0) facts.push(`${t('backfilled')} ${result.backfilled} ${t('papers_unit')}`)
+            if (Number(result.percentilesFilled) > 0) {
+              facts.push(`${t('quartiles_filled')} ${result.percentilesFilled} ${t('papers_unit')}`)
+            }
+            const meta = facts.length > 0 ? `（${facts.join(' · ')}）` : ''
+            const errors = Array.isArray(result.errors) && result.errors.length > 0
+            // 回溯会打很多次上游请求，429 / 超时比日常扫描常见得多 —— 逐条列出来
+            const detail = errors ? `\n${result.errors.slice(0, 6).map((e) => `${e.source}: ${e.message}`).join('\n')}` : ''
+            setNote({ kind: errors ? 'warn' : 'ok', text: head + meta + detail })
           })
           .catch((error) =>
             setNote({
@@ -2771,6 +2834,41 @@ window.__ModuleLoader__.load({
                   ),
                 ),
                 h('div', { className: 'drr-hint' }, t('lookback_hint')),
+                // 历史回溯：日常扫描只看最近 N 天，老论文永远进不来。
+                // 实测某主题全量 872 篇、30 天窗口只覆盖 6 篇 —— 这是「搜到的论文
+                // 有明显遗漏」的主因，所以单独给一个按年份往回补的入口。
+                h(
+                  'div',
+                  { className: 'drr-presets' },
+                  h('span', { className: 'drr-presets-label' }, t('history_backfill')),
+                  h(
+                    'div',
+                    { className: 'drr-seg' },
+                    [1, 3, 5, 10].map((n) =>
+                      h(
+                        'button',
+                        {
+                          key: n,
+                          type: 'button',
+                          className: Number(historyYears) === n ? 'drr-seg-on' : '',
+                          onClick: () => setHistoryYears(n),
+                        },
+                        `${n} ${t('years_unit')}`,
+                      ),
+                    ),
+                  ),
+                  h(
+                    'button',
+                    {
+                      className: 'drr-btn drr-btn-sm',
+                      type: 'button',
+                      disabled: busy !== '',
+                      onClick: runHistory,
+                    },
+                    busy === 'history' ? t('history_running') : t('history_start'),
+                  ),
+                ),
+                h('div', { className: 'drr-hint' }, t('history_hint')),
                 h(
                   'div',
                   { className: 'drr-presets' },

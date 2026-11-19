@@ -622,10 +622,27 @@ export function apply(ctx, config) {
             const forced = Number(body.lookbackDays)
             const lookbackDays =
               Number.isFinite(forced) && forced > 0 ? Math.min(3650, Math.round(forced)) : undefined
-            const result = await doScan({ reason: 'manual', topicIds, lookbackDays })
+            // 历史回溯：`years` 传年份数组（如 [2024, 2023]）时逐年精确取老论文。
+            // 日常扫描只覆盖最近 N 天，而一个方向的全量文献可能有几百上千篇 ——
+            // 不回溯的话老论文永远进不来，用户看到的就是「搜到的论文有明显遗漏」。
+            const years = Array.isArray(body.years)
+              ? body.years.map((y) => Number(y)).filter((y) => Number.isInteger(y) && y > 1800 && y <= new Date().getUTCFullYear() + 1)
+              : undefined
+            // 回溯时每个年份抓多少条。默认按设置里的配额，可临时调大。
+            const perTopicMax = Number(body.perTopicMax)
+            const result = await doScan({
+              reason: 'manual',
+              topicIds,
+              lookbackDays,
+              years: years !== undefined && years.length > 0 ? years : undefined,
+              history: years !== undefined && years.length > 0,
+              maxPerTopic: Number.isFinite(perTopicMax) && perTopicMax > 0 ? Math.round(perTopicMax) : undefined,
+            })
             sendJson(res, 200, {
               ok: true,
               newCount: result.newItems.length,
+              // 这次是不是历史回溯（面板据此决定提示文案）
+              history: result.history === true,
               // 本次实际使用的回溯窗口（增量抓取可能比配置值窄），面板会显示出来
               lookbackDays: result.lookbackDays ?? null,
               // 本次用的解析深度（brief / standard / deep），面板会显示出来
