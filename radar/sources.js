@@ -46,6 +46,75 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504])
 const RETRY_DELAYS = [4000, 9000, 18000]
 
 /**
+ * 上游给 `Retry-After` 时按它等，别用自己那套固定退避 —— 实测 OpenAlex 的
+ * 「搜索集群负载高」会明确写 `retry-after: 37`，而我们的固定退避只等到 31 秒，
+ * 于是每次都抢在解禁之前重试，三次全废。
+ *
+ * 但也不能无限等：单次上限 45 秒，超过就按上限等（说明上游这会儿很挤，
+ * 多等也未必有用，把时间让给别的源）。
+ */
+const MAX_RETRY_AFTER_MS = 45000
+
+/**
+ * 单个 URL 最多在「等上游消气」上花多久。
+ *
+ * 上游一次就要求等 37 秒时，等一次是划算的（等完就能拿到结果），但要连等三次
+ * 就是 111 秒，一次扫描全耗在这儿了。所以按总额封顶：等过一次大额之后，下次
+ * 再被拦就直接放弃这一路，让上层报「这路少了结果」，而不是死等。
+ */
+const MAX_TOTAL_WAIT_MS = 45000
+
+function retryAfterMs(res) {
+  const raw = res?.headers?.get?.('retry-after')
+  const seconds = Number(String(raw ?? '').trim())
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0
+  return Math.min(MAX_RETRY_AFTER_MS, Math.round(seconds * 1000))
+}
+
+/**
+ * 这次失败之后该等多久。返回 -1 表示「别再等了，放弃这一路」。
+ *
+ * 上游给了 Retry-After 就照它等（固定退避可能根本不够）；但总等待要封顶 ——
+ * 连等三次 37 秒就是 111 秒，一次扫描全耗在这儿了，还不如早点报「这路少了结果」。
+ */
+function nextWait(attempt, told, waited) {
+  if (told > 0) {
+    if (waited + told > MAX_TOTAL_WAIT_MS) return -1
+    return told
+  }
+  const fallback = RETRY_DELAYS[attempt]
+  if (fallback === undefined) return -1
+  if (waited + fallback > MAX_TOTAL_WAIT_MS) return -1
+  return fallback
+}
+
+/**
+ * 「这个 IP 现在被限流到什么时候」。
+ *
+ * 多路取样是串行发的，一路被 429 之后如果每路都各睡一遍 37 秒，一次抓取就
+ * 要两分多钟（实测 79 秒）。上游限流是按 IP 的，所以第一路等到的解禁时刻对
+ * 后面几路同样有效：后面几路只需要睡到那个时刻，不必再睡满一整个 Retry-After。
+ */
+let rateLimitedUntil = 0
+
+/**
+ * 某一路已经为了「等上游消气」把预算花光之后，短时间内别再让别的路重复等。
+ *
+ * 实测：短语路等 37 秒 → 还是 429 → 放弃；相关度路接着再等 37 秒 → 还是 429。
+ * 一次抓取 79 秒全耗在睡觉上。既然第一路已经证明了「现在等也没用」，后面的路
+ * 就该直接失败、把结果交出去，而不是排队再睡一遍。
+ */
+let waitBudgetSpentUntil = 0
+
+/** 供测试清理模块级限流状态（正常运行时不需要调用）。 */
+function resetRateLimit() {
+  rateLimitedUntil = 0
+  waitBudgetSpentUntil = 0
+}
+
+export { retryAfterMs, nextWait, resetRateLimit, MAX_RETRY_AFTER_MS, MAX_TOTAL_WAIT_MS }
+
+/**
  * OpenAlex 的检索接口要单独吃一套「按 IP 共享的免费日预算」，用完当天不再恢复
  * （普通 filter 查询走另一套配额，不受影响）。这种 429 重试是纯浪费：三次退避
  * 要等 31 秒，而预算不会在 31 秒内回来。
@@ -71,9 +140,20 @@ function httpError(url, status, statusText, text) {
 
 async function getText(url, headers = {}) {
   let lastError
+  let waited = 0
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt += 1) {
+    // 前一路已经把「解禁时刻」探出来了，这里只需要睡到那一刻，
+    // 不必再睡满一整个 Retry-After（否则三路串行就等三遍）。
+    //
+    // 但如果这一轮已经证明「等了也没用」（`waitBudgetSpentUntil`），就别再睡了：
+    // 直接发一次，成了算赚，还是 429 就立刻放弃，把结果交给上层。
+    if (Date.now() >= waitBudgetSpentUntil) {
+      const hold = rateLimitedUntil - Date.now()
+      if (hold > 0) await sleep(Math.min(hold, MAX_RETRY_AFTER_MS))
+    }
     await throttle()
     const { signal, done } = withTimeout(TIMEOUT_MS)
+    let told = 0
     try {
       const res = await fetch(url, {
         signal,
@@ -90,6 +170,9 @@ async function getText(url, headers = {}) {
       // 预算用尽当天不会恢复，重试只会把扫描拖长半分钟。
       if (lastError.exhausted === true) throw lastError
       if (!RETRYABLE.has(res.status) || attempt === RETRY_DELAYS.length) throw lastError
+      // 上游明确说了「多少秒后再来」，就照它说的等；固定退避可能根本不够。
+      told = retryAfterMs(res)
+      if (told > 0) rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + told)
     } catch (error) {
       if (error === lastError) throw error
       lastError = error
@@ -97,7 +180,17 @@ async function getText(url, headers = {}) {
     } finally {
       done()
     }
-    await sleep(RETRY_DELAYS[attempt])
+    // 这一轮抓取里已经有一路为了等上游把预算花光、而且等完还是被拦 ——
+    // 后面的路再排队睡一遍不会有不同结果，直接放弃并把结果交出去。
+    if (Date.now() < waitBudgetSpentUntil) throw lastError
+    const wait = nextWait(attempt, told, waited)
+    // 总等待已经封顶 —— 与其再睡一觉还是可能被拦，不如把这一路报成失败。
+    if (wait < 0) {
+      if (told > 0) waitBudgetSpentUntil = Date.now() + told
+      throw lastError
+    }
+    waited += wait
+    await sleep(wait)
   }
   throw lastError ?? new Error(`request failed: ${url}`)
 }
